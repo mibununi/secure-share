@@ -7,6 +7,7 @@ import PinataClient from '@pinata/sdk';
 import {Readable} from "node:stream";
 import authRoutes from './routes/auth';
 import keyRoutes from './routes/keys';
+import { requireAuth, type AuthReq } from "./auth";
 
 const app = express();
 app.use(cors());
@@ -44,14 +45,14 @@ async function insertFileRow(params: {
   return rows[0];
 }
 
-app.post('/api/upload', upload.single('file'), async (req, res) => {
+app.post('/api/upload', requireAuth, upload.single('file'), async (req: AuthReq, res) => {
   try {
     if (!req.file) return res.status(400).json({ ok: false, error: 'No file provided' });
 
     const { originalname, mimetype, buffer, size } = req.file;
     const filename = (req.body.filename as string) || originalname;
     const fileHash = (req.body.hash as string) || '';
-    const ownerId = "7d0c134f-9b56-459d-b3bb-7e0ef08ca9a4"; //temp - change after auth impl
+    const ownerId = req.user!.id;
 
     const stream = new Readable();
     stream._read = () => {};

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import "./styles/global.css";
 import "./styles/auth.css";
 import AuthPage from "./pages/Auth";
+import UploadPanel from "./components/UploadPanel";
 import { api } from "./lib/api";
 
 type Me = { id: string; email: string; public_key: string | null; created_at: string };
@@ -37,21 +38,23 @@ export default function App() {
 
     return (
         <div className="container">
-                <div className="header">
-                    <h2>SecureShare</h2>
-                    <button className="btn btn--danger" onClick={logout}>Logout</button>
+            <div className="header">
+                <h2>SecureShare</h2>
+                <button className="btn btn--danger" onClick={logout}>Logout</button>
+            </div>
+
+            {status && <p className="message">{status}</p>}
+
+            {me && (
+                <div className="panel">
+                    <div><b>User ID:</b> {me.id}</div>
+                    <div><b>Email:</b> {me.email}</div>
+                    <div><b>Public key:</b> {me.public_key ? "Yes" : "No"}</div>
+                    <div className="muted"><b>Joined:</b> {new Date(me.created_at).toLocaleString()}</div>
                 </div>
+            )}
 
-                {status && <p className="message">{status}</p>}
-
-                {me && (
-                    <div className="panel">
-                        <div><b>User ID:</b> {me.id}</div>
-                        <div><b>Email:</b> {me.email}</div>
-                        <div><b>Public key:</b> {me.public_key ? "Yes" : "No"}</div>
-                        <div className="muted"><b>Joined:</b> {new Date(me.created_at).toLocaleString()}</div>
-                    </div>
-                )}
+            <UploadPanel />
         </div>
     );
 }

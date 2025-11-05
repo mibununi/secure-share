@@ -27,6 +27,16 @@ app.get('/health', async (_req, res) => {
   }
 });
 
+app.get('/users', async (_req, res) => {
+  try {
+    const result = await pool.query('SELECT id, email, created_at FROM users ORDER BY created_at DESC');
+    res.json({ ok: true, users: result.rows });
+  } catch (e) {
+    console.error('Error fetching users: ', e);
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`API listening on http://localhost:${PORT}`);
 });

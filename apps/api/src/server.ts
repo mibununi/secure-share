@@ -2,6 +2,8 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { Pool } from 'pg';
+import authRoutes from './routes/auth';
+import keyRoutes from './routes/keys';
 
 const app = express();
 app.use(cors());
@@ -12,6 +14,9 @@ const PORT = Number(process.env.PORT || 4000);
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
+
+app.use('/auth', authRoutes(pool));
+app.use('/', keyRoutes(pool));
 
 app.get('/health', async (_req, res) => {
   try {

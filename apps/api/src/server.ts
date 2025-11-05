@@ -5,6 +5,8 @@ import { Pool } from 'pg';
 import multer from 'multer';
 import PinataClient from '@pinata/sdk';
 import {Readable} from "node:stream";
+import authRoutes from './routes/auth';
+import keyRoutes from './routes/keys';
 
 const app = express();
 app.use(cors());
@@ -15,6 +17,9 @@ const PORT = Number(process.env.PORT || 4000);
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
+
+app.use('/auth', authRoutes(pool));
+app.use('/', keyRoutes(pool));
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -79,7 +84,6 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     return res.status(500).json({ ok: false, error: String(e) });
   }
 });
-
 
 app.get('/health', async (_req, res) => {
   try {

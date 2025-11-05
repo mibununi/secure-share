@@ -1,47 +1,57 @@
-import { useState } from "react";
-const API = import.meta.env.VITE_API_BASE_URL;
+import { useEffect, useState } from "react";
+import "./styles/global.css";
+import "./styles/auth.css";
+import AuthPage from "./pages/Auth";
+import { api } from "./lib/api";
+
+type Me = { id: string; email: string; public_key: string | null; created_at: string };
 
 export default function App() {
-  const [status, setStatus] = useState("");
-  const [last, setLast] = useState<any>(null);
+    const [token, setToken] = useState<string | null>(() => localStorage.getItem("token"));
+    const [me, setMe] = useState<Me | null>(null);
+    const [status, setStatus] = useState<string>("");
 
-  async function upload(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setStatus("Uploading...");
-    setLast(null);
+    useEffect(() => {
+        let cancelled = false;
+        async function load() {
+            if (!token) { setMe(null); return; }
+            setStatus("Loading profile...");
+            try {
+                const { me } = await api.me(token);
+                if (!cancelled) { setMe(me); setStatus(""); }
+            } catch (e: any) {
+                if (!cancelled) {
+                    setStatus(e?.message || "Failed to load profile");
+                    localStorage.removeItem("token"); setToken(null); setMe(null);
+                }
+            }
+        }
+        load();
+        return () => { cancelled = true; };
+    }, [token]);
 
-    const input = e.currentTarget.elements.namedItem("file") as HTMLInputElement | null;
-    const file = input?.files?.[0];
-    if (!file) { setStatus("No file selected"); return; }
+    const onLoggedIn = (t: string) => { localStorage.setItem("token", t); setToken(t); };
+    const logout = () => { localStorage.removeItem("token"); setToken(null); setMe(null); };
 
-    const fd = new FormData();
-    fd.append("file", file);
+    if (!token) return <AuthPage onLoggedIn={onLoggedIn} />;
 
-    const r = await fetch(`${API}/api/upload`, { method: "POST", body: fd });
-    const json = await r.json();
-    setLast(json);
-    setStatus(json.ok ? "Uploaded" : "Failed");
-  }
+    return (
+        <div className="container">
+                <div className="header">
+                    <h2>SecureShare</h2>
+                    <button className="btn btn--danger" onClick={logout}>Logout</button>
+                </div>
 
-  return (
-    <div style={{ padding: 24 }}>
-      <h2>Upload to IPFS (via backend)</h2>
-      <form onSubmit={upload}>
-        <input type="file" name="file" />
-        <button type="submit">Upload</button>
-      </form>
-      <p>Status: {status || "Idle"}</p>
+                {status && <p className="message">{status}</p>}
 
-      {last?.ok && (
-        <div style={{ marginTop: 12 }}>
-          <div><b>Provider:</b> {last.provider}</div>
-          <div><b>CID:</b> {last.cid}</div>
-          <div>
-            <b>Gateway:</b>{" "}
-            <a href={last.gatewayUrl} target="_blank" rel="noreferrer">{last.gatewayUrl}</a>
-          </div>
+                {me && (
+                    <div className="panel">
+                        <div><b>User ID:</b> {me.id}</div>
+                        <div><b>Email:</b> {me.email}</div>
+                        <div><b>Public key:</b> {me.public_key ? "Yes" : "No"}</div>
+                        <div className="muted"><b>Joined:</b> {new Date(me.created_at).toLocaleString()}</div>
+                    </div>
+                )}
         </div>
-      )}
-    </div>
-  );
+    );
 }

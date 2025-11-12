@@ -3,6 +3,8 @@ import "../styles/auth.css";
 import { api } from "../lib/api";
 import '../styles/global.css';
 import '../styles/auth.css';
+import { setupKeysAfterRegister, loadSessionKeysAfterLogin } from "../lib/keySetup";
+import { loadKeystore } from "../lib/keystore";
 
 type Props = { onLoggedIn: (token: string) => void };
 
@@ -15,18 +17,35 @@ export default function AuthPage({ onLoggedIn }: Props) {
 
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
-        setBusy(true); setMsg(null);
+        setBusy(true);
+        setMsg(null);
+
         try {
+            const mail = email.trim();
+
             if (mode === "register") {
-                await api.register(email.trim(), password);
+                await api.register(mail, password);
                 setMsg("Registration successful. Please log in.");
                 setMode("login");
-            } else {
-                const { token } = await api.login(email.trim(), password);
-                onLoggedIn(token);
+                return;
             }
-        } catch (err: any) {
-            setMsg(err?.message || "Request failed");
+
+            const { token } = await api.login(mail, password);
+            const ks = await loadKeystore();
+            if (!ks) {
+                await setupKeysAfterRegister(password, token);
+            } else {
+                await loadSessionKeysAfterLogin(password);
+            }
+
+            onLoggedIn(token);
+
+        } catch (err: unknown) {
+            if (err instanceof Error) {
+                setMsg(err.message);
+            } else {
+                setMsg("Request failed");
+            }
         } finally {
             setBusy(false);
         }

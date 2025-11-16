@@ -91,6 +91,19 @@ export async function importPkcs8ToCryptoKey(pkcs8: Uint8Array): Promise<CryptoK
     );
 }
 
+export async function importSpkiFromB64(spkiB64: string): Promise<CryptoKey> {
+    const bin = atob(spkiB64);
+    const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return crypto.subtle.importKey(
+        "spki",
+        u8 as BufferSource,
+        { name: "RSA-OAEP", hash: "SHA-256" },
+        true,
+        ["encrypt"]
+    );
+}
+
 export function rand(bytes: number): Uint8Array {
     const u = new Uint8Array(bytes);
     crypto.getRandomValues(u);

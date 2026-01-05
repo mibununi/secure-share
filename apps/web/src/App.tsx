@@ -14,25 +14,40 @@ export default function App() {
 
     useEffect(() => {
         let cancelled = false;
+
         async function load() {
-            if (!token) { setMe(null); return; }
+            if (!token) {
+                setMe(null);
+                setStatus("");
+                return;
+            }
+
             setStatus("Loading profile...");
             try {
                 const { me } = await api.me(token);
-                if (!cancelled) { setMe(me); setStatus(""); }
-            } catch (e: any) {
-                if (!cancelled) {
-                    setStatus(e?.message || "Failed to load profile");
-                    localStorage.removeItem("token"); setToken(null); setMe(null);
-                }
+                if (cancelled) return;
+                setMe(me);
+                setStatus("");
+            } catch (e: unknown) {
+                console.error("Error loading profile:", e);
+                if (cancelled) return;
+                logout();
+                setStatus("");
             }
         }
         load();
         return () => { cancelled = true; };
     }, [token]);
 
-    const onLoggedIn = (t: string) => { localStorage.setItem("token", t); setToken(t); };
-    const logout = () => { localStorage.removeItem("token"); setToken(null); setMe(null); };
+    const onLoggedIn = (t: string) => {
+        localStorage.setItem("token", t);
+        setToken(t);
+    };
+    const logout = () => {
+        localStorage.removeItem("token");
+        setToken(null);
+        setMe(null);
+    };
 
     if (!token) return <AuthPage onLoggedIn={onLoggedIn} />;
 

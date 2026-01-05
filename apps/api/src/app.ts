@@ -30,28 +30,12 @@ if (!process.env.PINATA_JWT) {
 }
 const pinata = process.env.PINATA_JWT ? new PinataClient({ pinataJWTKey: process.env.PINATA_JWT }) : null;
 
-async function insertFileRow(params: {
-    ownerId: string | null; filename: string; cid: string; fileHash?: string; mime?: string;
-}) {
-    const { ownerId, filename, cid, fileHash = '', mime = null as any } = params;
-    const { rows } = await pool.query(
-        `INSERT INTO files (owner_id, filename, cid, file_hash, mime)
-         VALUES ($1,$2,$3,$4,$5)
-             RETURNING id, created_at`,
-        [ownerId, filename, cid, fileHash, mime]
-    );
-    return rows[0];
-}
-
 app.post('/api/upload', requireAuth, upload.single('file'), async (req: AuthReq, res) => {
     try {
         if (!req.file) return res.status(400).json({ ok: false, error: 'No file provided' });
         if (!pinata) return res.status(500).json({ ok: false, error: 'Pinata not configured' });
 
-        const { originalname, mimetype, buffer, size } = req.file;
-        const filename = (req.body.filename as string) || originalname;
-        const fileHash = (req.body.hash as string) || '';
-        const ownerId = req.user!.id;
+        const { originalname, buffer, size } = req.file;
 
         const stream = new Readable();
         stream._read = () => {};
@@ -64,22 +48,56 @@ app.post('/api/upload', requireAuth, upload.single('file'), async (req: AuthReq,
         });
         const cid = pinned.IpfsHash;
 
-        const rec = await insertFileRow({
-            ownerId, filename, cid, fileHash, mime: mimetype
-        });
-
         res.json({
             ok: true,
             provider: 'pinata',
-            fileId: rec.id,
-            createdAt: rec.created_at,
             cid,
             path: cid,
             size,
-            gatewayUrl: 'https://gateway.pinata.cloud/ipfs/${cid}',
+            gatewayUrl: `https://gateway.pinata.cloud/ipfs/${cid}`,
         });
     } catch (e) {
         res.status(500).json({ ok: false, error: String(e) });
+    }
+});
+
+app.post("/api/files/metadata", requireAuth, async (req: AuthReq, res) => {
+    try {
+        const {
+            filename,
+            mime,
+            cid,
+            cipher_iv_b64,
+            wrapped_key_b64,
+            cipher_sha256_b64,
+        } = req.body ?? {};
+
+        if (!filename || !cid || !cipher_iv_b64 || !wrapped_key_b64) {
+            return res.status(400).json({ ok: false, error: "Missing fields" });
+        }
+
+        const { rows } = await pool.query(
+            `INSERT INTO files (owner_id, filename, cid, file_hash, mime, cipher_iv, wrapped_key, cipher_sha256)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             RETURNING id, created_at
+             `,
+            [
+                req.user!.id,
+                filename,
+                cid,
+                cipher_sha256_b64 ?? null,
+                mime ?? null,
+                cipher_iv_b64,
+                wrapped_key_b64,
+                cipher_sha256_b64 ?? null,
+            ]
+        );
+
+        const { id, created_at } = rows[0];
+        return res.json({ ok: true, fileId: id, createdAt: created_at });
+    } catch (e: any) {
+        console.error("metadata error:", e);
+        return res.status(500).json({ ok: false, error: String(e?.message || e) });
     }
 });
 

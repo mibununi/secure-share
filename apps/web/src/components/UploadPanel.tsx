@@ -74,9 +74,9 @@ export default function UploadPanel() {
 
             const sha = new Uint8Array(await crypto.subtle.digest("SHA-256", ct));
 
-            const rawKey = new Uint8Array(await crypto.subtle.exportKey("raw", aesKey));
+            const rawKeyBuf = await crypto.subtle.exportKey("raw", aesKey);
             const wrapped = new Uint8Array(
-                await crypto.subtle.encrypt({ name: "RSA-OAEP" }, publicKey, rawKey.buffer)
+                await crypto.subtle.encrypt({ name: "RSA-OAEP" }, publicKey, rawKeyBuf)
             );
 
             const token = localStorage.getItem("token") || "";
@@ -136,24 +136,24 @@ export default function UploadPanel() {
     }
 
     return (
-        <div className="panel" style={{ marginTop: 16 }}>
+        <div className="panel" style={{marginTop: 16}}>
             <h3>Encrypt & Upload</h3>
-            <form onSubmit={onSubmit} className="form" style={{ marginTop: 12 }}>
+            <form onSubmit={onSubmit} className="form" style={{marginTop: 12}}>
                 <input
                     className="input"
                     type="file"
                     name="file"
                     onChange={(e) => setFile(e.currentTarget.files?.[0] ?? null)}
                 />
-                <button className="btn btn--success" style={{ marginTop: 8 }} disabled={!file}>
+                <button className="btn btn--success" style={{marginTop: 8}} disabled={!file}>
                     Upload
                 </button>
             </form>
 
-            <p className="muted" style={{ marginTop: 8 }}>Status: {status || "Idle"}</p>
+            <p className="muted" style={{marginTop: 8}}>Status: {status || "Idle"}</p>
 
             {last?.cid && (
-                <div style={{ marginTop: 12 }}>
+                <div style={{marginTop: 12}}>
                     <div><b>CID:</b> {last.cid}</div>
                     <div>
                         <b>Gateway:</b>{" "}

@@ -1,12 +1,11 @@
-import React, { useState } from "react";
-import "../styles/auth.css";
+import { useState, type FormEvent } from "react";
 import { api } from "../lib/api";
 import '../styles/global.css';
 import '../styles/auth.css';
-import { setupKeysAfterRegister, loadSessionKeysAfterLogin } from "../lib/keySetup";
+import { setupKeysAfterRegister } from "../lib/keySetup";
 import { loadKeystore } from "../lib/keystore";
 
-type Props = { onLoggedIn: (token: string) => void };
+type Props = { onLoggedIn: (token: string, password: string) => void | Promise<void> };
 
 export default function AuthPage({ onLoggedIn }: Props) {
     const [mode, setMode] = useState<"login" | "register">("login");
@@ -15,7 +14,7 @@ export default function AuthPage({ onLoggedIn }: Props) {
     const [busy, setBusy] = useState(false);
     const [msg, setMsg] = useState<string | null>(null);
 
-    async function handleSubmit(e: React.FormEvent) {
+    async function handleSubmit(e: FormEvent) {
         e.preventDefault();
         setBusy(true);
         setMsg(null);
@@ -34,13 +33,10 @@ export default function AuthPage({ onLoggedIn }: Props) {
             const ks = await loadKeystore();
             if (!ks) {
                 await setupKeysAfterRegister(password, token);
-            } else {
-                await loadSessionKeysAfterLogin(password);
             }
+            await onLoggedIn(token, password);
 
-            onLoggedIn(token);
-
-        } catch (err: unknown) {
+            } catch (err: unknown) {
             if (err instanceof Error) {
                 setMsg(err.message);
             } else {

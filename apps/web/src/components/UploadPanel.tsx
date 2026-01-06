@@ -1,3 +1,7 @@
+type Props = {
+    onUploaded: () => void;
+};
+
 type UploadOk = {
     ok: true;
     provider: string;
@@ -41,7 +45,7 @@ async function generateAesKey(): Promise<CryptoKey> {
     );
 }
 
-export default function UploadPanel() {
+export default function UploadPanel({ onUploaded }: Props) {
     const [status, setStatus] = useState("");
     const [last, setLast] = useState<UploadSummary | null>(null);
     const [file, setFile] = useState<File | null>(null);
@@ -126,6 +130,7 @@ export default function UploadPanel() {
                 createdAt: metaJson.ok ? metaJson.createdAt : undefined,
             });
             setStatus("Encrypted upload complete.");
+            onUploaded();
             setFile(null);
             (e.target as HTMLFormElement).reset();
         } catch (err: unknown) {

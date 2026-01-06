@@ -12,22 +12,46 @@ async function postJSON<T>(
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify(body),
+        cache: "no-store",
     });
-    const json = await r.json();
-    if (!r.ok || json?.ok === false) {
-        throw new Error(json?.error || r.statusText);
+    const text = await r.text();
+    let json: unknown = null;
+
+    try {
+        json = JSON.parse(text);
+    } catch {
+        //non-JSON response is allowed
     }
+
+    if (!r.ok || (json as { ok?: boolean })?.ok === false) {
+        throw new Error(
+            (json as { error?: string })?.error || r.statusText
+        );
+    }
+
     return json as T;
 }
 
 async function getJSON<T>(path: string, token?: string): Promise<T> {
     const r = await fetch(`${API_BASE}${path}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
+        cache: "no-store",
     });
-    const json = await r.json();
-    if (!r.ok || json?.ok === false) {
-        throw new Error(json?.error || r.statusText);
+    const text = await r.text();
+    let json: unknown = null;
+
+    try {
+        json = JSON.parse(text);
+    } catch {
+        //non-JSON response is allowed
     }
+
+    if (!r.ok || (json as { ok?: boolean })?.ok === false) {
+        throw new Error(
+            (json as { error?: string })?.error || r.statusText
+        );
+    }
+
     return json as T;
 }
 

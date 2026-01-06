@@ -14,6 +14,8 @@ export default function App() {
     const [me, setMe] = useState<Me | null>(null);
     const [status, setStatus] = useState<string>("");
     const [sessionPrivateKey, setSessionPrivateKey] = useState<CryptoKey | null>(null);
+    const [filesVersion, setFilesVersion] = useState(0);
+    const notifyFilesChanged = () => setFilesVersion(v => v + 1);
 
     useEffect(() => {
         let cancelled = false;
@@ -83,8 +85,12 @@ export default function App() {
                 </div>
             )}
 
-            <UploadPanel/>
-            <MyFilesPanel token={token ?? ""} sessionPrivateKey={sessionPrivateKey} />
+            <UploadPanel onUploaded={notifyFilesChanged} />
+            <MyFilesPanel
+                token={token ?? ""}
+                sessionPrivateKey={sessionPrivateKey}
+                filesVersion={filesVersion}
+            />
         </div>
     );
 }

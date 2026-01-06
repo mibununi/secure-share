@@ -7,9 +7,10 @@ type FileRow = MyFilesResponse["files"][number];
 type Props = {
     token: string;
     sessionPrivateKey: CryptoKey | null;
+    filesVersion: number;
 };
 
-export default function MyFilesPanel({ token, sessionPrivateKey }: Props) {
+export default function MyFilesPanel({ token, sessionPrivateKey, filesVersion }: Props) {
     const [files, setFiles] = useState<FileRow[]>([]);
     const [status, setStatus] = useState("");
 
@@ -38,7 +39,7 @@ export default function MyFilesPanel({ token, sessionPrivateKey }: Props) {
         return () => {
             cancelled = true;
         };
-    }, [token]);
+    }, [token, filesVersion]);
 
     async function refresh() {
         const res = await api.myFiles(token);
@@ -75,12 +76,12 @@ export default function MyFilesPanel({ token, sessionPrivateKey }: Props) {
             }
 
             const ownerWrappedKeyU8 = fromB64(ownerWrappedKeyB64);
-            const ownerWrappedKey = new Uint8Array(ownerWrappedKeyU8).buffer;
+            const ownerWrappedKeyView = ownerWrappedKeyU8.slice();
 
             const aesRawBuf = await crypto.subtle.decrypt(
                 { name: "RSA-OAEP" },
                 sessionPrivateKey,
-                ownerWrappedKey
+                ownerWrappedKeyView
             );
 
             const recipientPk = await importSpkiFromB64(recipientPublicKeyB64);
@@ -95,10 +96,15 @@ export default function MyFilesPanel({ token, sessionPrivateKey }: Props) {
             await refresh();
 
         } catch (e: unknown) {
-            const msg = e instanceof Error ? e.message : String(e);
+            console.error("shareFile error:", e);
+
+            const msg =
+                e instanceof Error
+                    ? `${e.name}${e.message ? `: ${e.message}` : ""}`
+                    : String(e);
             setShareStatus(`Share failed: ${msg}`);
-        }
     }
+}
 
     return (
         <div className="panel" style={{ marginTop: 16 }}>
@@ -118,8 +124,12 @@ export default function MyFilesPanel({ token, sessionPrivateKey }: Props) {
                             <button
                                 type="button"
                                 className="btn"
-                                style={{ marginTop: 8 }}
+                                style={{marginTop: 8}}
                                 onClick={() => {
+                                    if (activeFileId === f.id) {
+                                        setActiveFileId(null);
+                                        return;
+                                    }
                                     setActiveFileId(f.id);
                                     setRecipientEmail("");
                                     setRecipientUserId(null);
@@ -127,11 +137,11 @@ export default function MyFilesPanel({ token, sessionPrivateKey }: Props) {
                                     setShareStatus("");
                                 }}
                             >
-                                Share
+                                {activeFileId === f.id ? "Close" : "Access"}
                             </button>
 
                             {activeFileId === f.id && (
-                                <div style={{ marginTop: 10 }}>
+                                <div style={{marginTop: 10}}>
                                     <input
                                         className="input"
                                         type="email"

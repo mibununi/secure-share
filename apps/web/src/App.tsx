@@ -6,6 +6,7 @@ import UploadPanel from "./components/UploadPanel";
 import { api } from "./lib/api";
 import MyFilesPanel from "./components/MyFilesPanel";
 import { loadSessionKeysAfterLogin } from "./lib/keySetup";
+import SharedWithMePanel from "./components/SharedWithMePanel";
 
 type Me = { id: string; email: string; public_key: string | null; created_at: string };
 
@@ -90,6 +91,10 @@ export default function App() {
                 token={token ?? ""}
                 sessionPrivateKey={sessionPrivateKey}
                 filesVersion={filesVersion}
+            />
+            <SharedWithMePanel
+                token={token ?? ""}
+                sessionPrivateKey={sessionPrivateKey}
             />
         </div>
     );

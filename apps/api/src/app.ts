@@ -130,10 +130,10 @@ app.get("/api/files/:fileId/access", requireAuth, async (req: AuthReq, res) => {
         const fileId = req.params.fileId;
 
         const fileRes = await pool.query(
-            `SELECT id, owner_id, filename, cid, mime, cipher_iv, created_at
+            `SELECT id, owner_id, filename, cid, mime, cipher_iv, cipher_sha256, created_at
              FROM files
              WHERE id = $1
-             LIMIT 1`,
+                 LIMIT 1`,
             [fileId]
         );
 
@@ -142,10 +142,7 @@ app.get("/api/files/:fileId/access", requireAuth, async (req: AuthReq, res) => {
         }
 
         const file = fileRes.rows[0];
-
-        if (file.owner_id !== req.user!.id) {
-            return res.status(403).json({ ok: false, error: "Not authorised" });
-        }
+        const isOwner = file.owner_id === req.user!.id;
 
         const permRes = await pool.query(
             `SELECT wrapped_key_b64, revoked_at
@@ -154,6 +151,15 @@ app.get("/api/files/:fileId/access", requireAuth, async (req: AuthReq, res) => {
              LIMIT 1`,
             [fileId, req.user!.id]
         );
+
+        if (!isOwner) {
+            if (permRes.rows.length === 0) {
+                return res.status(403).json({ ok: false, error: "Not authorised" });
+            }
+            if (permRes.rows[0].revoked_at) {
+                return res.status(403).json({ ok: false, error: "Access revoked" });
+            }
+        }
 
         let wrapped_key_b64: string | null = null;
 
@@ -186,6 +192,7 @@ app.get("/api/files/:fileId/access", requireAuth, async (req: AuthReq, res) => {
                 mime: file.mime,
                 created_at: file.created_at,
                 cipher_iv_b64: file.cipher_iv,
+                cipher_sha256_b64: file.cipher_sha256 ?? null,
                 wrapped_key_b64,
             },
         });
@@ -269,6 +276,27 @@ app.post("/api/files/:fileId/share", requireAuth, async (req: AuthReq, res) => {
         return res.json({ ok: true });
     } catch (e: any) {
         console.error("share error:", e);
+        return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+});
+
+app.get("/api/files/shared-with-me", requireAuth, async (req: AuthReq, res) => {
+    try {
+        const { rows } = await pool.query(
+            `SELECT f.id, f.filename, f.cid, f.mime, f.created_at, u.email AS owner_email
+             FROM file_permissions fp
+                 JOIN files f ON f.id = fp.file_id
+                 JOIN users u ON u.id = f.owner_id
+             WHERE fp.user_id = $1
+               AND fp.revoked_at IS NULL
+               AND f.owner_id <> $1
+             ORDER BY f.created_at DESC;`,
+            [req.user!.id]
+        );
+
+        return res.json({ ok: true, files: rows });
+    } catch (e: any) {
+        console.error("shared-with-me error:", e);
         return res.status(500).json({ ok: false, error: String(e?.message || e) });
     }
 });

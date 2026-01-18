@@ -73,6 +73,7 @@ export type FileAccessResponse = {
         mime: string | null;
         created_at: string;
         cipher_iv_b64: string;
+        cipher_sha256_b64: string | null;
         wrapped_key_b64: string;
     };
 };
@@ -83,6 +84,18 @@ export type PublicKeyLookupResponse = {
 };
 
 export type ShareFileResponse = { ok: true };
+
+export type SharedWithMeResponse = {
+    ok: true;
+    files: {
+        id: string;
+        owner_id: string;
+        filename: string;
+        cid: string;
+        mime: string | null;
+        created_at: string;
+    }[];
+};
 
 export const api = {
     register: (email: string, password: string) =>
@@ -104,4 +117,6 @@ export const api = {
             { recipientUserId, wrapped_key_b64 },
             token
         ),
+    sharedWithMe: (token: string) =>
+        getJSON<SharedWithMeResponse>("/api/files/shared-with-me", token),
 };

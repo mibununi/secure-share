@@ -283,12 +283,14 @@ app.post("/api/files/:fileId/share", requireAuth, async (req: AuthReq, res) => {
 app.get("/api/files/shared-with-me", requireAuth, async (req: AuthReq, res) => {
     try {
         const { rows } = await pool.query(
-            `SELECT f.id, f.owner_id, f.filename, f.cid, f.mime, f.created_at
+            `SELECT f.id, f.filename, f.cid, f.mime, f.created_at, u.email AS owner_email
              FROM file_permissions fp
-             JOIN files f ON f.id = fp.file_id
+                 JOIN files f ON f.id = fp.file_id
+                 JOIN users u ON u.id = f.owner_id
              WHERE fp.user_id = $1
                AND fp.revoked_at IS NULL
-             ORDER BY f.created_at DESC`,
+               AND f.owner_id <> $1
+             ORDER BY f.created_at DESC;`,
             [req.user!.id]
         );
 

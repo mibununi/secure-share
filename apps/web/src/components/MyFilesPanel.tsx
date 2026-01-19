@@ -19,6 +19,13 @@ export default function MyFilesPanel({ token, sessionPrivateKey, filesVersion }:
     const [recipientUserId, setRecipientUserId] = useState<string | null>(null);
     const [recipientPublicKeyB64, setRecipientPublicKeyB64] = useState<string | null>(null);
     const [shareStatus, setShareStatus] = useState("");
+    const [permsStatus, setPermsStatus] = useState("");
+    const [permissions, setPermissions] = useState<{
+        user_id: string;
+        email: string;
+        revoked_at: string | null;
+        is_owner: boolean;
+    }[]>([]);
 
     useEffect(() => {
         let cancelled = false;
@@ -35,7 +42,7 @@ export default function MyFilesPanel({ token, sessionPrivateKey, filesVersion }:
                 setStatus(`Failed to load files: ${msg}`);
             }
         }
-        if (token) load();
+        if (token) void load();
         return () => {
             cancelled = true;
         };
@@ -44,6 +51,31 @@ export default function MyFilesPanel({ token, sessionPrivateKey, filesVersion }:
     async function refresh() {
         const res = await api.myFiles(token);
         setFiles(res.files);
+    }
+
+    async function loadPermissions(fileId: string) {
+        try {
+            setPermsStatus("Loading access list...");
+            const res = await api.filePermissions(fileId, token);
+            setPermissions(res.permissions);
+            setPermsStatus("");
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            setPermissions([]);
+            setPermsStatus(`Failed to load access list: ${msg}`);
+        }
+    }
+
+    async function revokeUser(fileId: string, recipientUserId: string) {
+        try {
+            setPermsStatus("Revoking...");
+            await api.revokeAccess(fileId, recipientUserId, token);
+            setPermsStatus("Access revoked.");
+            await loadPermissions(fileId);
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            setPermsStatus(`Revoke failed: ${msg}`);
+        }
     }
 
     async function lookupRecipient() {
@@ -94,6 +126,7 @@ export default function MyFilesPanel({ token, sessionPrivateKey, filesVersion }:
             await api.shareFile(fileId, recipientUserId, toB64(wrappedForRecipient), token);
             setShareStatus("Shared successfully.");
             await refresh();
+            await loadPermissions(fileId);
 
         } catch (e: unknown) {
             console.error("shareFile error:", e);
@@ -128,6 +161,8 @@ export default function MyFilesPanel({ token, sessionPrivateKey, filesVersion }:
                                 onClick={() => {
                                     if (activeFileId === f.id) {
                                         setActiveFileId(null);
+                                        setPermissions([]);
+                                        setPermsStatus("");
                                         return;
                                     }
                                     setActiveFileId(f.id);
@@ -135,6 +170,9 @@ export default function MyFilesPanel({ token, sessionPrivateKey, filesVersion }:
                                     setRecipientUserId(null);
                                     setRecipientPublicKeyB64(null);
                                     setShareStatus("");
+                                    setPermissions([]);
+                                    setPermsStatus("");
+                                    void loadPermissions(f.id);
                                 }}
                             >
                                 {activeFileId === f.id ? "Close" : "Access"}
@@ -149,8 +187,9 @@ export default function MyFilesPanel({ token, sessionPrivateKey, filesVersion }:
                                         value={recipientEmail}
                                         onChange={(e) => setRecipientEmail(e.target.value)}
                                     />
-                                    <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                                        <button type="button" className="btn" disabled={!recipientEmail} onClick={lookupRecipient}>
+                                    <div style={{display: "flex", gap: 8, marginTop: 8}}>
+                                        <button type="button" className="btn" disabled={!recipientEmail}
+                                                onClick={lookupRecipient}>
                                             Find user
                                         </button>
                                         <button
@@ -163,8 +202,49 @@ export default function MyFilesPanel({ token, sessionPrivateKey, filesVersion }:
                                         </button>
                                     </div>
 
-                                    <p className="muted" style={{ marginTop: 8 }}>Share status: {shareStatus || "Idle"}</p>
+                                    <p className="muted" style={{marginTop: 8}}>Share
+                                        status: {shareStatus || "Idle"}</p>
                                     {recipientUserId && <p className="muted"><b>Recipient ID:</b> {recipientUserId}</p>}
+                                    <div style={{marginTop: 16, borderTop: "1px solid #eee", paddingTop: 12}}>
+                                        <h4 style={{margin: 0}}>Who has access</h4>
+                                        {permsStatus && <p className="muted" style={{marginTop: 8}}>{permsStatus}</p>}
+
+                                        {permissions.length === 0 ? (
+                                            <p className="muted" style={{marginTop: 8}}>No access entries found.</p>
+                                        ) : (
+                                            <div style={{marginTop: 8}}>
+                                                {permissions.map((p) => (
+                                                    <div key={p.user_id} style={{
+                                                        display: "flex",
+                                                        justifyContent: "space-between",
+                                                        gap: 12,
+                                                        padding: "6px 0"
+                                                    }}>
+                                                        <div style={{minWidth: 0}}>
+                                                            <div style={{wordBreak: "break-word"}}>
+                                                                <b>{p.email}</b>
+                                                            </div>
+                                                            <div className="muted" style={{fontSize: 12}}>
+                                                                {p.revoked_at ? `Revoked: ${new Date(p.revoked_at).toLocaleString()}` : "Active"}
+                                                            </div>
+                                                        </div>
+
+                                                        {!p.revoked_at && (
+                                                            <button
+                                                                type="button"
+                                                                className="btn btn--danger"
+                                                                onClick={() => revokeUser(f.id, p.user_id)}
+                                                                disabled={p.is_owner}
+                                                                title={p.is_owner ? "The owner cannot be revoked" : undefined}
+                                                            >
+                                                                {p.is_owner ? "Owner" : "Revoke"}
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             )}
                         </div>

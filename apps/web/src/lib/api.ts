@@ -97,6 +97,18 @@ export type SharedWithMeResponse = {
     }[];
 };
 
+export type FilePermissionsResponse = {
+    ok: true;
+    permissions: {
+        user_id: string;
+        email: string;
+        revoked_at: string | null;
+        is_owner: true;
+    }[];
+};
+
+export type RevokeResponse = { ok: true };
+
 export const api = {
     register: (email: string, password: string) =>
         postJSON<RegisterResponse>("/auth/register", { email, password }),
@@ -119,4 +131,8 @@ export const api = {
         ),
     sharedWithMe: (token: string) =>
         getJSON<SharedWithMeResponse>("/api/files/shared-with-me", token),
+    filePermissions: (fileId: string, token: string) =>
+        getJSON<FilePermissionsResponse>(`/api/files/${fileId}/permissions`, token),
+    revokeAccess: (fileId: string, recipientUserId: string, token: string) =>
+        postJSON<RevokeResponse>(`/api/files/${fileId}/revoke`, { recipientUserId }, token),
 };

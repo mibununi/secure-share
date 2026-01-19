@@ -202,6 +202,47 @@ app.get("/api/files/:fileId/access", requireAuth, async (req: AuthReq, res) => {
     }
 });
 
+app.get("/api/files/:fileId/permissions", requireAuth, async (req: AuthReq, res) => {
+    try {
+        const fileId = req.params.fileId;
+
+        //only owner can view permissions list (for now)
+        const ownerCheck = await pool.query(
+            `SELECT owner_id
+             FROM files
+             WHERE id = $1
+             LIMIT 1`,
+            [fileId]
+        );
+
+        if (ownerCheck.rows.length === 0) {
+            return res.status(404).json({ ok: false, error: "File not found" });
+        }
+        if (ownerCheck.rows[0].owner_id !== req.user!.id) {
+            return res.status(403).json({ ok: false, error: "Only the owner can view permissions" });
+        }
+
+        const { rows } = await pool.query(
+            `SELECT
+                 u.id AS user_id,
+                 u.email,
+                 fp.revoked_at,
+                 (u.id = f.owner_id) AS is_owner
+             FROM file_permissions fp
+                 JOIN users u ON u.id = fp.user_id
+                 JOIN files f ON f.id = fp.file_id
+             WHERE fp.file_id = $1
+             ORDER BY u.email;`,
+            [fileId]
+        );
+
+        return res.json({ ok: true, permissions: rows });
+    } catch (e: any) {
+        console.error("permissions list error:", e);
+        return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+});
+
 app.get("/api/users/public-key", requireAuth, async (req: AuthReq, res) => {
     try {
         const email = String(req.query.email || "").trim().toLowerCase();
@@ -276,6 +317,55 @@ app.post("/api/files/:fileId/share", requireAuth, async (req: AuthReq, res) => {
         return res.json({ ok: true });
     } catch (e: any) {
         console.error("share error:", e);
+        return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+});
+
+app.post("/api/files/:fileId/revoke", requireAuth, async (req: AuthReq, res) => {
+    try {
+        const fileId = req.params.fileId;
+        const { recipientUserId } = req.body ?? {};
+
+        if (!recipientUserId) {
+            return res.status(400).json({ ok: false, error: "Missing recipientUserId" });
+        }
+
+        //only owner can revoke (for now)
+        const ownerCheck = await pool.query(
+            `SELECT owner_id
+             FROM files
+             WHERE id = $1
+             LIMIT 1`,
+            [fileId]
+        );
+
+        if (ownerCheck.rows.length === 0) {
+            return res.status(404).json({ ok: false, error: "File not found" });
+        }
+        if (ownerCheck.rows[0].owner_id !== req.user!.id) {
+            return res.status(403).json({ ok: false, error: "Only the owner can revoke access" });
+        }
+
+        //do not allow revoking self
+        if (recipientUserId === req.user!.id) {
+            return res.status(400).json({ ok: false, error: "Cannot revoke the owner" });
+        }
+
+        const result = await pool.query(
+            `UPDATE file_permissions
+             SET revoked_at = NOW()
+             WHERE file_id = $1 AND user_id = $2 AND revoked_at IS NULL
+             RETURNING file_id, user_id, revoked_at`,
+            [fileId, recipientUserId]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ ok: false, error: "Permission not found or already revoked" });
+        }
+
+        return res.json({ ok: true });
+    } catch (e: any) {
+        console.error("revoke error:", e);
         return res.status(500).json({ ok: false, error: String(e?.message || e) });
     }
 });

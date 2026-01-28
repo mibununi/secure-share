@@ -3,12 +3,11 @@ import "./styles/global.css";
 import "./styles/auth.css";
 import AuthPage from "./pages/Auth";
 import UploadPanel from "./components/UploadPanel";
-import { api } from "./lib/api";
-import MyFilesPanel from "./components/MyFilesPanel";
+import {api, type UserRole} from "./lib/api";
 import { loadSessionKeysAfterLogin } from "./lib/keySetup";
-import SharedWithMePanel from "./components/SharedWithMePanel";
+import AllFilesPanel from "./components/AllFilesPanel.tsx";
 
-type Me = { id: string; email: string; public_key: string | null; created_at: string };
+type Me = { id: string; email: string; role: UserRole;  public_key: string | null; created_at: string };
 
 export default function App() {
     const [token, setToken] = useState<string | null>(() => localStorage.getItem("token"));
@@ -31,9 +30,9 @@ export default function App() {
 
             setStatus("Loading profile...");
             try {
-                const { me } = await api.me(token);
+                const res = await api.me(token);
+                setMe(res.me ?? null);
                 if (cancelled) return;
-                setMe(me);
                 setStatus("");
             } catch (e: unknown) {
                 console.error("Error loading profile:", e);
@@ -80,6 +79,7 @@ export default function App() {
                 <div className="panel">
                     <div><b>User ID:</b> {me.id}</div>
                     <div><b>Email:</b> {me.email}</div>
+                    <div><b>Role:</b> {me.role}</div>
                     <div><b>Public key:</b> {me.public_key ? "Yes" : "No"}</div>
                     <div><b>Session keys:</b> {sessionPrivateKey ? "Unlocked" : "Locked"}</div>
                     <div className="muted"><b>Joined:</b> {new Date(me.created_at).toLocaleString()}</div>
@@ -87,15 +87,16 @@ export default function App() {
             )}
 
             <UploadPanel onUploaded={notifyFilesChanged} />
-            <MyFilesPanel
-                token={token ?? ""}
-                sessionPrivateKey={sessionPrivateKey}
-                filesVersion={filesVersion}
-            />
-            <SharedWithMePanel
-                token={token ?? ""}
-                sessionPrivateKey={sessionPrivateKey}
-            />
+
+            {me && (
+                <AllFilesPanel
+                    token={token}
+                    meId={me.id}
+                    role={me.role}
+                    sessionPrivateKey={sessionPrivateKey}
+                    filesVersion={filesVersion}
+                />
+            )}
         </div>
     );
 }

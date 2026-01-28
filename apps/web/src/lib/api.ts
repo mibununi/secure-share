@@ -55,9 +55,11 @@ async function getJSON<T>(path: string, token?: string): Promise<T> {
     return json as T;
 }
 
+export type UserRole = 'admin' | 'manager' | 'employee';
+
 export type AuthResponse = { ok: true; token: string };
 export type RegisterResponse = { ok: true; user: { id: string; email: string } };
-export type MeResponse = { ok: true; me: { id: string; email: string; public_key: string | null; created_at: string } };
+export type MeResponse = { ok: true; me: { id: string; email: string; role: UserRole; public_key: string | null; created_at: string } };
 
 export type MyFilesResponse = {
     ok: true;
@@ -94,6 +96,8 @@ export type SharedWithMeResponse = {
         cid: string;
         mime: string | null;
         created_at: string;
+        owner_email: string;
+        shared_by_email: string | null;
     }[];
 };
 
@@ -102,8 +106,9 @@ export type FilePermissionsResponse = {
     permissions: {
         user_id: string;
         email: string;
+        user_role?: UserRole;
         revoked_at: string | null;
-        is_owner: true;
+        is_owner: boolean;
     }[];
 };
 

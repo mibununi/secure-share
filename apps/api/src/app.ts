@@ -7,7 +7,7 @@ import PinataClient from '@pinata/sdk';
 import { Readable } from 'node:stream';
 import authRoutes from './routes/auth';
 import keyRoutes from './routes/keys';
-import { requireAuth, type AuthReq } from './auth';
+import { requireAuth, type AuthReq, type UserRole } from './auth';
 
 const app = express();
 app.use(cors());
@@ -29,6 +29,12 @@ if (!process.env.PINATA_JWT) {
     console.warn('PINATA_JWT is not set. /api/upload will fail.');
 }
 const pinata = process.env.PINATA_JWT ? new PinataClient({ pinataJWTKey: process.env.PINATA_JWT }) : null;
+
+function canShare(role: UserRole, isOwner: boolean) {
+    if (role === "admin") return true;
+    if (role === "manager") return true;
+    return isOwner; // employee: only own
+}
 
 app.post('/api/upload', requireAuth, upload.single('file'), async (req: AuthReq, res) => {
     try {
@@ -94,12 +100,13 @@ app.post("/api/files/metadata", requireAuth, async (req: AuthReq, res) => {
 
         const { id, created_at } = rows[0];
         await pool.query(
-            `INSERT INTO file_permissions (file_id, user_id, wrapped_key_b64)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (file_id, user_id)
-             DO UPDATE SET wrapped_key_b64 = EXCLUDED.wrapped_key_b64,
-                 revoked_at = NULL`,
-            [id, req.user!.id, wrapped_key_b64]
+            `INSERT INTO file_permissions (file_id, user_id, wrapped_key_b64, granted_by_user_id)
+             VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (file_id, user_id)
+                 DO UPDATE SET wrapped_key_b64 = EXCLUDED.wrapped_key_b64,
+                     revoked_at = NULL,
+                     granted_by_user_id = EXCLUDED.granted_by_user_id`,
+            [id, req.user!.id, wrapped_key_b64, req.user!.id]
         );
         return res.json({ ok: true, fileId: id, createdAt: created_at });
     } catch (e: any) {
@@ -206,33 +213,46 @@ app.get("/api/files/:fileId/permissions", requireAuth, async (req: AuthReq, res)
     try {
         const fileId = req.params.fileId;
 
-        //only owner can view permissions list (for now)
-        const ownerCheck = await pool.query(
-            `SELECT owner_id
-             FROM files
-             WHERE id = $1
-             LIMIT 1`,
+        const fileRes = await pool.query(
+            `SELECT owner_id FROM files WHERE id = $1 LIMIT 1`,
             [fileId]
         );
+        if (fileRes.rows.length === 0) return res.status(404).json({ ok: false, error: "File not found" });
 
-        if (ownerCheck.rows.length === 0) {
-            return res.status(404).json({ ok: false, error: "File not found" });
-        }
-        if (ownerCheck.rows[0].owner_id !== req.user!.id) {
-            return res.status(403).json({ ok: false, error: "Only the owner can view permissions" });
+        const ownerId = fileRes.rows[0].owner_id;
+        const isOwner = ownerId === req.user!.id;
+
+        const hasActiveAccessRes = await pool.query(
+            `SELECT 1
+             FROM file_permissions
+             WHERE file_id = $1 AND user_id = $2 AND revoked_at IS NULL
+                 LIMIT 1`,
+            [fileId, req.user!.id]
+        );
+        const hasActiveAccess = hasActiveAccessRes.rows.length > 0;
+
+        const role = req.user!.role;
+
+        const canView =
+            role === "admin" ||
+            (role === "manager" && (isOwner || hasActiveAccess));
+
+        if (!canView) {
+            return res.status(403).json({ ok: false, error: "Not authorised to view access list" });
         }
 
         const { rows } = await pool.query(
             `SELECT
                  u.id AS user_id,
                  u.email,
+                 u.role AS user_role,
                  fp.revoked_at,
                  (u.id = f.owner_id) AS is_owner
              FROM file_permissions fp
                  JOIN users u ON u.id = fp.user_id
                  JOIN files f ON f.id = fp.file_id
              WHERE fp.file_id = $1
-             ORDER BY u.email;`,
+             ORDER BY u.email`,
             [fileId]
         );
 
@@ -280,38 +300,28 @@ app.post("/api/files/:fileId/share", requireAuth, async (req: AuthReq, res) => {
             return res.status(400).json({ ok: false, error: "Missing recipientUserId or wrapped_key_b64" });
         }
 
-        const ownerCheck = await pool.query(
-            `SELECT owner_id
-             FROM files
-             WHERE id = $1 
-             LIMIT 1`,
+        const fileQ = await pool.query(
+            `SELECT owner_id FROM files WHERE id = $1 LIMIT 1`,
             [fileId]
         );
-        if (ownerCheck.rows.length === 0) {
-            return res.status(404).json({ ok: false, error: "File not found" });
-        }
-        if (ownerCheck.rows[0].owner_id !== req.user!.id) {
-            return res.status(403).json({ ok: false, error: "Only the owner can share this file" });
+        if (fileQ.rows.length === 0) return res.status(404).json({ ok: false, error: "File not found" });
+
+        const isOwner = fileQ.rows[0].owner_id === req.user!.id;
+        if (!canShare(req.user!.role, isOwner)) {
+            return res.status(403).json({ ok: false, error: "Not authorised to share this file" });
         }
 
-        const userCheck = await pool.query(
-            `SELECT id 
-             FROM users 
-             WHERE id = $1 
-             LIMIT 1`,
-            [recipientUserId]
-        );
-        if (userCheck.rows.length === 0) {
-            return res.status(404).json({ ok: false, error: "User not found" });
-        }
+        const userCheck = await pool.query(`SELECT id FROM users WHERE id = $1 LIMIT 1`, [recipientUserId]);
+        if (userCheck.rows.length === 0) return res.status(404).json({ ok: false, error: "User not found" });
 
         await pool.query(
-            `INSERT INTO file_permissions (file_id, user_id, wrapped_key_b64)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (file_id, user_id)
-             DO UPDATE SET wrapped_key_b64 = EXCLUDED.wrapped_key_b64,
-                     revoked_at = NULL`,
-            [fileId, recipientUserId, wrapped_key_b64]
+            `INSERT INTO file_permissions (file_id, user_id, wrapped_key_b64, granted_by_user_id)
+             VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (file_id, user_id)
+                 DO UPDATE SET wrapped_key_b64 = EXCLUDED.wrapped_key_b64,
+                     revoked_at = NULL,
+                     granted_by_user_id = EXCLUDED.granted_by_user_id`,
+            [fileId, recipientUserId, wrapped_key_b64, req.user!.id]
         );
 
         return res.json({ ok: true });
@@ -325,37 +335,52 @@ app.post("/api/files/:fileId/revoke", requireAuth, async (req: AuthReq, res) => 
     try {
         const fileId = req.params.fileId;
         const { recipientUserId } = req.body ?? {};
+        if (!recipientUserId) return res.status(400).json({ ok: false, error: "Missing recipientUserId" });
 
-        if (!recipientUserId) {
-            return res.status(400).json({ ok: false, error: "Missing recipientUserId" });
+        // employees cannot revoke
+        if (req.user!.role === "employee") {
+            return res.status(403).json({ ok: false, error: "Not authorised to revoke access" });
         }
 
-        //only owner can revoke (for now)
-        const ownerCheck = await pool.query(
-            `SELECT owner_id
-             FROM files
-             WHERE id = $1
-             LIMIT 1`,
-            [fileId]
+        // must have access to the file to manage it
+        const accessQ = await pool.query(
+            `SELECT 1
+             FROM file_permissions
+             WHERE file_id = $1 AND user_id = $2 AND revoked_at IS NULL
+                 LIMIT 1`,
+            [fileId, req.user!.id]
         );
-
-        if (ownerCheck.rows.length === 0) {
-            return res.status(404).json({ ok: false, error: "File not found" });
-        }
-        if (ownerCheck.rows[0].owner_id !== req.user!.id) {
-            return res.status(403).json({ ok: false, error: "Only the owner can revoke access" });
+        if (accessQ.rows.length === 0) {
+            return res.status(403).json({ ok: false, error: "Not authorised" });
         }
 
-        //do not allow revoking self
+        // prevent revoking owner (or yourself)
+        const fileQ = await pool.query(`SELECT owner_id FROM files WHERE id = $1 LIMIT 1`, [fileId]);
+        if (fileQ.rows.length === 0) return res.status(404).json({ ok: false, error: "File not found" });
+
         if (recipientUserId === req.user!.id) {
-            return res.status(400).json({ ok: false, error: "Cannot revoke the owner" });
+            return res.status(400).json({ ok: false, error: "You cannot revoke yourself" });
+        }
+
+        // manager cannot revoke admins
+        const targetRes = await pool.query(
+            `SELECT role FROM users WHERE id = $1 LIMIT 1`,
+            [recipientUserId]
+        );
+        if (targetRes.rows.length === 0) return res.status(404).json({ ok: false, error: "User not found" });
+
+        if (req.user!.role === "manager") {
+            const target = await pool.query(`SELECT role FROM users WHERE id = $1 LIMIT 1`, [recipientUserId]);
+            if (target.rows[0]?.role === "admin") {
+                return res.status(403).json({ ok: false, error: "Managers cannot revoke admins" });
+            }
         }
 
         const result = await pool.query(
             `UPDATE file_permissions
              SET revoked_at = NOW()
              WHERE file_id = $1 AND user_id = $2 AND revoked_at IS NULL
-             RETURNING file_id, user_id, revoked_at`,
+                 RETURNING file_id, user_id, revoked_at`,
             [fileId, recipientUserId]
         );
 
@@ -373,10 +398,19 @@ app.post("/api/files/:fileId/revoke", requireAuth, async (req: AuthReq, res) => 
 app.get("/api/files/shared-with-me", requireAuth, async (req: AuthReq, res) => {
     try {
         const { rows } = await pool.query(
-            `SELECT f.id, f.filename, f.cid, f.mime, f.created_at, u.email AS owner_email
+            `SELECT
+                 f.id,
+                 f.owner_id,
+                 f.filename,
+                 f.cid,
+                 f.mime,
+                 f.created_at,
+                 owner.email AS owner_email,
+                 sharer.email AS shared_by_email
              FROM file_permissions fp
                  JOIN files f ON f.id = fp.file_id
-                 JOIN users u ON u.id = f.owner_id
+                 JOIN users owner ON owner.id = f.owner_id
+                 LEFT JOIN users sharer ON sharer.id = fp.granted_by_user_id
              WHERE fp.user_id = $1
                AND fp.revoked_at IS NULL
                AND f.owner_id <> $1

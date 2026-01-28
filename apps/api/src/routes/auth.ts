@@ -41,7 +41,9 @@ export default function authRoutes(pool: Pool) {
         const { email, password } = parsed.data;
         try {
             const q = await pool.query(
-                `SELECT id, email, password_hash FROM users WHERE email = $1`,
+                `SELECT id, email, password_hash, role
+                 FROM users 
+                 WHERE lower(email) = $1`,
                 [email]
             );
             if (q.rowCount === 0) return res.status(401).json({ ok: false, error: 'Invalid credentials' });
@@ -49,7 +51,7 @@ export default function authRoutes(pool: Pool) {
             const ok = await verifyPassword(q.rows[0].password_hash, password);
             if (!ok) return res.status(401).json({ ok: false, error: 'Invalid credentials' });
 
-            const token = signAccessToken({ id: q.rows[0].id, email: q.rows[0].email });
+            const token = signAccessToken({ id: q.rows[0].id, email: q.rows[0].email, role: q.rows[0].role });
             return res.json({ ok: true, token });
         } catch (e) {
             return res.status(500).json({ ok: false, error: String(e) });
@@ -59,7 +61,7 @@ export default function authRoutes(pool: Pool) {
     r.get('/me', requireAuth, async (req: AuthReq, res) => {
         try {
             const q = await pool.query(
-                `SELECT id, email, public_key, created_at FROM users WHERE id = $1`,
+                `SELECT id, email, public_key, role, created_at FROM users WHERE id = $1`,
                 [req.user!.id]
             );
             return res.json({ ok: true, me: q.rows[0] });

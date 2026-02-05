@@ -78,7 +78,7 @@ app.post("/api/files/metadata", requireAuth, async (req: AuthReq, res) => {
             cipher_sha256_b64,
         } = req.body ?? {};
 
-        if (!filename || !cid || !cipher_iv_b64 || !wrapped_key_b64) {
+        if (!filename || !cid || !cipher_iv_b64 || !wrapped_key_b64 || !cipher_sha256_b64) {
             return res.status(400).json({ ok: false, error: "Missing fields" });
         }
 
@@ -91,10 +91,10 @@ app.post("/api/files/metadata", requireAuth, async (req: AuthReq, res) => {
                 req.user!.id,
                 filename,
                 cid,
-                cipher_sha256_b64 ?? null,
+                cipher_sha256_b64,
                 mime ?? null,
                 cipher_iv_b64,
-                cipher_sha256_b64 ?? null,
+                cipher_sha256_b64,
             ]
         );
 
@@ -152,39 +152,21 @@ app.get("/api/files/:fileId/access", requireAuth, async (req: AuthReq, res) => {
         const isOwner = file.owner_id === req.user!.id;
 
         const permRes = await pool.query(
-            `SELECT wrapped_key_b64, revoked_at
+            `SELECT wrapped_key_b64
              FROM file_permissions
-             WHERE file_id = $1 AND user_id = $2
-             LIMIT 1`,
+             WHERE file_id = $1 AND user_id = $2 AND revoked_at IS NULL
+                 LIMIT 1`,
             [fileId, req.user!.id]
         );
 
-        if (!isOwner) {
-            if (permRes.rows.length === 0) {
-                return res.status(403).json({ ok: false, error: "Not authorised" });
-            }
-            if (permRes.rows[0].revoked_at) {
-                return res.status(403).json({ ok: false, error: "Access revoked" });
-            }
+        if (permRes.rows.length === 0) {
+            return res.status(isOwner ? 500 : 403).json({
+                ok: false,
+                error: isOwner ? "Owner permission record missing" : "Not authorised",
+            });
         }
 
-        let wrapped_key_b64: string | null = null;
-
-        if (permRes.rows.length > 0) {
-            if (permRes.rows[0].revoked_at) {
-                return res.status(403).json({ ok: false, error: "Access revoked" });
-            }
-            wrapped_key_b64 = permRes.rows[0].wrapped_key_b64;
-        } else {
-            const fallback = await pool.query(
-                `SELECT wrapped_key
-                 FROM files
-                 WHERE id = $1
-                 LIMIT 1`,
-                [fileId]
-            );
-            wrapped_key_b64 = fallback.rows[0]?.wrapped_key ?? null;
-        }
+        const wrapped_key_b64 = permRes.rows[0].wrapped_key_b64;
 
         if (!wrapped_key_b64) {
             return res.status(500).json({ ok: false, error: "Missing wrapped key for this file" });

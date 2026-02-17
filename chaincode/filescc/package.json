@@ -1,0 +1,17 @@
+{
+  "name": "filescc",
+  "version": "1.0.0",
+  "description": "Secure-share file ACL chaincode",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "fabric-chaincode-node server --chaincode-address=$CHAINCODE_SERVER_ADDRESS --chaincode-id=$CHAINCODE_ID"
+},
+  "dependencies": {
+    "fabric-contract-api": "^2.5.0",
+    "fabric-shim": "^2.5.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

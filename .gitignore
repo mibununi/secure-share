@@ -17,6 +17,7 @@ dist-ssr
 .env.*
 apps/*/.env
 apps/*/.env.*
+api/fabric/crypto/
 
 # Editor directories and files
 .vscode/*

@@ -8,6 +8,20 @@ import { Readable } from 'node:stream';
 import authRoutes from './routes/auth';
 import keyRoutes from './routes/keys';
 import { requireAuth, type AuthReq, type UserRole } from './auth';
+import { getFilesLedger } from "./fabric/gateway";
+import { FilesLedger } from "./fabric/filesLedger";
+
+let filesLedger: FilesLedger | null = null;
+
+(async () => {
+    try {
+        filesLedger = await getFilesLedger(); // creates gateway + contract + wrapper
+        console.log("Fabric ledger connected");
+    } catch (e) {
+        console.warn("Fabric ledger not connected:", e);
+        filesLedger = null;
+    }
+})();
 
 const app = express();
 app.use(cors());
@@ -417,3 +431,9 @@ app.get('/health', async (_req, res) => {
 });
 
 export default app;
+
+app.get("/api/fabric/ping", requireAuth, async (_req: AuthReq, res) => {
+    if (!filesLedger) return res.status(503).json({ ok: false, error: "Fabric not available" });
+    const out = await filesLedger.ping();
+    return res.json({ ok: true, out });
+});

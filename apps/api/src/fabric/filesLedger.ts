@@ -71,4 +71,9 @@ export class FilesLedger {
         const res = await this.contract.evaluateTransaction('GetAudit', fileId);
         return asJson<AuditEvent[]>(res);
     }
+
+    async ping() {
+        const res = await this.contract.evaluateTransaction("Ping");
+        return Buffer.from(res).toString("utf8");
+    }
 }

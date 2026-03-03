@@ -10,17 +10,15 @@ export type FileRecord = {
 
 export type ACLRecord = {
     fileId: string;
-    recipients: string[];
-    updatedAt: string;
+    ownerId: string;
+    allowed: Record<string, true>;
 };
 
 export type AuditEvent = {
-    fileId: string;
-    action: 'CREATE_FILE' | 'GRANT_ACCESS' | 'REVOKE_ACCESS';
+    action: 'CREATE' | 'GRANT' | 'REVOKE';
     actorId: string;
-    targetId?: string;
+    targetUserId?: string;
     ts: string;
-    txId: string;
 };
 
 function asJson<T>(bytes: Uint8Array): T {

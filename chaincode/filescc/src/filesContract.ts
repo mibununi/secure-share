@@ -1,5 +1,5 @@
-import { Context, Contract } from "fabric-contract-api";
-import { Buffer } from "buffer";
+import {Context, Contract} from "fabric-contract-api";
+import {Buffer} from "buffer";
 
 type AuditEvent = {
     action: "CREATE" | "GRANT" | "REVOKE";
@@ -22,9 +22,17 @@ type ACLRecord = {
     allowed: Record<string, true>;
 };
 
-function fileKey(fileId: string) { return `file:${fileId}`; }
-function aclKey(fileId: string) { return `acl:${fileId}`; }
-function auditPrefix(fileId: string) { return `audit:${fileId}:`; }
+function fileKey(fileId: string) {
+    return `file:${fileId}`;
+}
+
+function aclKey(fileId: string) {
+    return `acl:${fileId}`;
+}
+
+function auditPrefix(fileId: string) {
+    return `audit:${fileId}:`;
+}
 
 export class FilesContract extends Contract {
     async CreateFile(ctx: Context, fileId: string, ownerId: string, cid: string, hash: string, createdAt: string) {
@@ -32,14 +40,14 @@ export class FilesContract extends Contract {
         const existing = await ctx.stub.getState(fk);
         if (existing && existing.length > 0) throw new Error("File already exists on ledger");
 
-        const file: FileRecord = { fileId, ownerId, cid, hash, createdAt };
-        const acl: ACLRecord = { fileId, ownerId, allowed: { [ownerId]: true } };
+        const file: FileRecord = {fileId, ownerId, cid, hash, createdAt};
+        const acl: ACLRecord = {fileId, ownerId, allowed: {[ownerId]: true}};
 
         await ctx.stub.putState(fk, Buffer.from(JSON.stringify(file)));
         await ctx.stub.putState(aclKey(fileId), Buffer.from(JSON.stringify(acl)));
 
-        await this.appendAudit(ctx, fileId, { action: "CREATE", actorId: ownerId, ts: createdAt });
-        return true;
+        await this.appendAudit(ctx, fileId, {action: "CREATE", actorId: ownerId, ts: createdAt});
+        return JSON.stringify(file);
     }
 
     async GrantAccess(ctx: Context, fileId: string, ownerId: string, granteeId: string, ts: string) {
@@ -49,8 +57,8 @@ export class FilesContract extends Contract {
         acl.allowed[granteeId] = true;
         await ctx.stub.putState(aclKey(fileId), Buffer.from(JSON.stringify(acl)));
 
-        await this.appendAudit(ctx, fileId, { action: "GRANT", actorId: ownerId, targetUserId: granteeId, ts });
-        return true;
+        await this.appendAudit(ctx, fileId, {action: "GRANT", actorId: ownerId, targetUserId: granteeId, ts});
+        return JSON.stringify(acl);
     }
 
     async RevokeAccess(ctx: Context, fileId: string, ownerId: string, granteeId: string, ts: string) {
@@ -61,8 +69,8 @@ export class FilesContract extends Contract {
         delete acl.allowed[granteeId];
         await ctx.stub.putState(aclKey(fileId), Buffer.from(JSON.stringify(acl)));
 
-        await this.appendAudit(ctx, fileId, { action: "REVOKE", actorId: ownerId, targetUserId: granteeId, ts });
-        return true;
+        await this.appendAudit(ctx, fileId, {action: "REVOKE", actorId: ownerId, targetUserId: granteeId, ts});
+        return JSON.stringify(acl);
     }
 
     async CanAccess(ctx: Context, fileId: string, userId: string) {

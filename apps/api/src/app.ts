@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import {Pool} from 'pg';
+import {pool} from "./db";
 import multer from 'multer';
 import PinataClient from '@pinata/sdk';
 import {Readable} from 'node:stream';
@@ -26,10 +26,6 @@ let filesLedger: FilesLedger | null = null;
 const app = express();
 app.use(cors());
 app.use(express.json());
-
-export const pool = new Pool({
-    connectionString: process.env.DATABASE_URL
-});
 
 app.use('/auth', authRoutes(pool));
 app.use('/', keyRoutes(pool));
@@ -333,9 +329,10 @@ app.post("/api/files/:fileId/share", requireAuth, async (req: AuthReq, res) => {
         }
 
         const fileQ = await pool.query(
-            `SELECT owner_id
+            `SELECT id, owner_id, cid, cipher_sha256, created_at
              FROM files
-             WHERE id = $1 LIMIT 1`,
+             WHERE id = $1
+                 LIMIT 1`,
             [fileId]
         );
         if (fileQ.rows.length === 0) return res.status(404).json({ok: false, error: "File not found"});
@@ -361,8 +358,32 @@ app.post("/api/files/:fileId/share", requireAuth, async (req: AuthReq, res) => {
         );
 
         if (filesLedger) {
-            await filesLedger.grantAccess(String(fileId), String(fileQ.rows[0].owner_id), String(recipientUserId), new Date().toISOString());
+            const ownerId = String(fileQ.rows[0].owner_id);
+
+            try {
+                await filesLedger.getACL(String(fileId));
+            } catch (err: any) {
+                try {
+                    await filesLedger.createFile(
+                        String(fileId),
+                        ownerId,
+                        String(fileQ.rows[0].cid),
+                        String(fileQ.rows[0].cipher_sha256),
+                        new Date(fileQ.rows[0].created_at).toISOString()
+                    );
+                } catch (e) {
+                    console.error("fabric CreateFile backfill failed:", e);
+                    return res.status(503).json({ ok: false, error: "Blockchain backfill failed" });
+                }
+            }
+            await filesLedger.grantAccess(
+                String(fileId),
+                ownerId,
+                String(recipientUserId),
+                new Date().toISOString()
+            );
         }
+
         return res.json({ok: true});
     } catch (e: any) {
         console.error("share error:", e);
@@ -395,9 +416,13 @@ app.post("/api/files/:fileId/revoke", requireAuth, async (req: AuthReq, res) => 
         }
 
         // prevent revoking owner (or yourself)
-        const fileQ = await pool.query(`SELECT owner_id
-                                        FROM files
-                                        WHERE id = $1 LIMIT 1`, [fileId]);
+        const fileQ = await pool.query(
+            `SELECT id, owner_id, cid, cipher_sha256, created_at
+             FROM files
+             WHERE id = $1
+                 LIMIT 1`,
+            [fileId]
+        );
         if (fileQ.rows.length === 0) return res.status(404).json({ok: false, error: "File not found"});
 
         if (recipientUserId === req.user!.id) {
@@ -436,7 +461,27 @@ app.post("/api/files/:fileId/revoke", requireAuth, async (req: AuthReq, res) => 
         }
 
         if (filesLedger) {
-            await filesLedger.revokeAccess(String(fileId), String(fileQ.rows[0].owner_id), String(recipientUserId), new Date().toISOString());
+            const ownerId = String(fileQ.rows[0].owner_id);
+
+            // ensure ledger record exists
+            try {
+                await filesLedger.getACL(String(fileId));
+            } catch {
+                await filesLedger.createFile(
+                    String(fileId),
+                    ownerId,
+                    String(fileQ.rows[0].cid),
+                    String(fileQ.rows[0].cipher_sha256),
+                    new Date(fileQ.rows[0].created_at).toISOString()
+                );
+            }
+
+            await filesLedger.revokeAccess(
+                String(fileId),
+                ownerId,
+                String(recipientUserId),
+                new Date().toISOString()
+            );
         }
 
         return res.json({ok: true});

@@ -4,10 +4,12 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "tsx watch src/start.ts",
+    "dev": "tsx watch -r dotenv/config src/start.ts",
     "test": "cross-env NODE_ENV=test jest --runInBand",
     "build": "tsc",
-    "start": "tsx src/start.ts"
+    "start": "tsx -r dotenv/config src/start.ts",
+    "fabric:rebuild": "tsx -r dotenv/config src/scripts/rebuildLedger.ts",
+    "fabric:refresh": "powershell -ExecutionPolicy Bypass -File ..\\..\\scripts\\refresh_and_rebuild.ps1"
   },
   "keywords": [],
   "author": "",

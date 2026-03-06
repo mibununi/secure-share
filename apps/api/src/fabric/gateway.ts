@@ -1,9 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { connect, signers, type Gateway, type Identity } from '@hyperledger/fabric-gateway';
+import {connect, signers, type Gateway, type Identity} from '@hyperledger/fabric-gateway';
 import * as grpc from '@grpc/grpc-js';
-import { createPrivateKey } from "crypto";
-import { FilesLedger } from "./filesLedger";
+import {createPrivateKey} from "crypto";
+import {FilesLedger} from "./filesLedger";
 
 function mustEnv(name: string): string {
     const v = process.env[name];
@@ -38,7 +38,7 @@ function firstPeerFromConnectionProfile(ccp: any): { peerName: string; endpoint:
     if (!url) throw new Error(`Peer ${peerName} missing url in connection profile`);
 
     const endpoint = url.replace(/^grpcs?:\/\//, "");
-    return { peerName, endpoint };
+    return {peerName, endpoint};
 }
 
 export type FabricConfig = {
@@ -54,21 +54,23 @@ export async function newGateway(cfg: FabricConfig): Promise<{ gateway: Gateway 
     const ccp = JSON.parse(fs.readFileSync(ccpPath, 'utf8'));
 
     // peer endpoint
-    const { peerName, endpoint } = firstPeerFromConnectionProfile(ccp);
+    const {peerName, endpoint} = firstPeerFromConnectionProfile(ccp);
 
     // TLS root cert for the peer connection
     const tlsRootCert = loadTlsRootCert(ccp, peerName);
 
     const tlsHost =
+        process.env.FABRIC_TLS_HOST_OVERRIDE ||
         ccp?.peers?.[peerName]?.grpcOptions?.["ssl-target-name-override"] ||
-        "peer0.org1.example.com";
+        ccp?.peers?.[peerName]?.grpcOptions?.["hostnameOverride"] ||
+        peerName;
 
     const client = new grpc.Client(
         endpoint,
         grpc.credentials.createSsl(tlsRootCert),
         {
-            "grpc.ssl_target_name_override": tlsHost,
-            "grpc.default_authority": tlsHost,
+            'grpc.ssl_target_name_override': tlsHost,
+            'grpc.default_authority': tlsHost,
         }
     );
 
@@ -89,20 +91,20 @@ export async function newGateway(cfg: FabricConfig): Promise<{ gateway: Gateway 
         identity,
         signer,
         // defaults for dev
-        evaluateOptions: () => ({ deadline: Date.now() + 5000 }),
-        endorseOptions: () => ({ deadline: Date.now() + 15000 }),
-        submitOptions: () => ({ deadline: Date.now() + 15000 }),
-        commitStatusOptions: () => ({ deadline: Date.now() + 60000 }),
+        evaluateOptions: () => ({deadline: Date.now() + 5000}),
+        endorseOptions: () => ({deadline: Date.now() + 15000}),
+        submitOptions: () => ({deadline: Date.now() + 15000}),
+        commitStatusOptions: () => ({deadline: Date.now() + 60000}),
     });
 
-    return { gateway };
+    return {gateway};
 }
 
 export async function getFilesLedger(): Promise<FilesLedger> {
     const channelName = mustEnv("FABRIC_CHANNEL");
     const chaincodeName = mustEnv("FABRIC_CHAINCODE");
 
-    const { gateway } = await newGateway({ channelName, chaincodeName });
+    const {gateway} = await newGateway({channelName, chaincodeName});
     const network = gateway.getNetwork(channelName);
     const contract = network.getContract(chaincodeName);
 

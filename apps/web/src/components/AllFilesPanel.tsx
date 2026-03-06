@@ -219,7 +219,7 @@ export default function AllFilesPanel({token, meId, role, sessionPrivateKey, fil
 
             // fetch access metadata
             const access = await api.fileAccess(file.id, token);
-            const {cid, filename, mime, cipher_iv_b64, cipher_sha256_b64, wrapped_key_b64} = access.file;
+            const {filename, mime, cipher_iv_b64, cipher_sha256_b64, wrapped_key_b64} = access.file;
 
             // unwrap AES key using my RSA private key
             setDownloadStatus((m) => ({...m, [file.id]: "Unwrapping key..."}));
@@ -247,10 +247,15 @@ export default function AllFilesPanel({token, meId, role, sessionPrivateKey, fil
 
             // download ciphertext
             setDownloadStatus((m) => ({...m, [file.id]: "Downloading..."}));
-            const url = `https://gateway.pinata.cloud/ipfs/${cid}`;
-            const resp = await fetch(url, {cache: "no-store"});
-            if (!resp.ok) throw new Error(`Download failed: ${resp.status} ${resp.statusText}`);
-
+            const url = `${import.meta.env.VITE_API_BASE ?? "http://localhost:4000"}/api/files/${file.id}/download`;
+            const resp = await fetch(url, {
+                headers: { Authorization: `Bearer ${token}` },
+                cache: "no-store",
+            });
+            if (!resp.ok) {
+                const text = await resp.text().catch(() => "");
+                throw new Error(`Download failed: ${resp.status} ${resp.statusText}${text ? ` - ${text}` : ""}`);
+            }
             const ctBuf = await resp.arrayBuffer();
             const ct = new Uint8Array(ctBuf);
 

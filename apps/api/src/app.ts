@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import {Pool} from 'pg';
+import {pool} from "./db";
 import multer from 'multer';
 import PinataClient from '@pinata/sdk';
 import {Readable} from 'node:stream';
@@ -10,6 +10,8 @@ import keyRoutes from './routes/keys';
 import {requireAuth, type AuthReq, type UserRole} from './auth';
 import {getFilesLedger} from "./fabric/gateway";
 import {FilesLedger} from "./fabric/filesLedger";
+import {sha256B64, timingSafeEqualStr} from "./utils/crypto";
+import { requireFileAccessOrOwner, HttpError } from "./utils/access";
 
 let filesLedger: FilesLedger | null = null;
 
@@ -26,10 +28,6 @@ let filesLedger: FilesLedger | null = null;
 const app = express();
 app.use(cors());
 app.use(express.json());
-
-export const pool = new Pool({
-    connectionString: process.env.DATABASE_URL
-});
 
 app.use('/auth', authRoutes(pool));
 app.use('/', keyRoutes(pool));
@@ -75,7 +73,7 @@ app.post('/api/upload', requireAuth, upload.single('file'), async (req: AuthReq,
             cid,
             path: cid,
             size,
-            gatewayUrl: `https://gateway.pinata.cloud/ipfs/${cid}`,
+            gatewayUrl: `https://ipfs.io/ipfs/${cid}`,
         });
     } catch (e) {
         res.status(500).json({ok: false, error: String(e)});
@@ -188,16 +186,12 @@ app.get("/api/files/:fileId/access", requireAuth, async (req: AuthReq, res) => {
         const isOwner = file.owner_id === req.user!.id;
 
         // Fabric enforcement
-        if (!isOwner) {
-            if (!filesLedger) {
-                return res.status(503).json({ok: false, error: "Fabric not available"});
-            }
-
-            const allowed = await filesLedger.canAccess(String(fileId), String(req.user!.id));
-            if (!allowed) {
-                return res.status(403).json({ok: false, error: "Not authorised"});
-            }
-        }
+        await requireFileAccessOrOwner({
+            filesLedger,
+            fileId: String(fileId),
+            ownerId: String(file.owner_id),
+            userId: String(req.user!.id),
+        });
 
         const permRes = await pool.query(
             `SELECT wrapped_key_b64
@@ -235,8 +229,11 @@ app.get("/api/files/:fileId/access", requireAuth, async (req: AuthReq, res) => {
             },
         });
     } catch (e: any) {
-        console.error("file access error:", e);
-        return res.status(500).json({ok: false, error: String(e?.message || e)});
+        if (e instanceof HttpError) {
+            return res.status(e.status).json({ ok: false, error: e.message });
+        }
+        console.error("... error:", e);
+        return res.status(500).json({ ok: false, error: String(e?.message || e) });
     }
 });
 
@@ -333,7 +330,7 @@ app.post("/api/files/:fileId/share", requireAuth, async (req: AuthReq, res) => {
         }
 
         const fileQ = await pool.query(
-            `SELECT owner_id
+            `SELECT id, owner_id, cid, cipher_sha256, created_at
              FROM files
              WHERE id = $1 LIMIT 1`,
             [fileId]
@@ -361,8 +358,32 @@ app.post("/api/files/:fileId/share", requireAuth, async (req: AuthReq, res) => {
         );
 
         if (filesLedger) {
-            await filesLedger.grantAccess(String(fileId), String(fileQ.rows[0].owner_id), String(recipientUserId), new Date().toISOString());
+            const ownerId = String(fileQ.rows[0].owner_id);
+
+            try {
+                await filesLedger.getACL(String(fileId));
+            } catch (err: any) {
+                try {
+                    await filesLedger.createFile(
+                        String(fileId),
+                        ownerId,
+                        String(fileQ.rows[0].cid),
+                        String(fileQ.rows[0].cipher_sha256),
+                        new Date(fileQ.rows[0].created_at).toISOString()
+                    );
+                } catch (e) {
+                    console.error("fabric CreateFile backfill failed:", e);
+                    return res.status(503).json({ok: false, error: "Blockchain backfill failed"});
+                }
+            }
+            await filesLedger.grantAccess(
+                String(fileId),
+                ownerId,
+                String(recipientUserId),
+                new Date().toISOString()
+            );
         }
+
         return res.json({ok: true});
     } catch (e: any) {
         console.error("share error:", e);
@@ -395,9 +416,12 @@ app.post("/api/files/:fileId/revoke", requireAuth, async (req: AuthReq, res) => 
         }
 
         // prevent revoking owner (or yourself)
-        const fileQ = await pool.query(`SELECT owner_id
-                                        FROM files
-                                        WHERE id = $1 LIMIT 1`, [fileId]);
+        const fileQ = await pool.query(
+            `SELECT id, owner_id, cid, cipher_sha256, created_at
+             FROM files
+             WHERE id = $1 LIMIT 1`,
+            [fileId]
+        );
         if (fileQ.rows.length === 0) return res.status(404).json({ok: false, error: "File not found"});
 
         if (recipientUserId === req.user!.id) {
@@ -436,7 +460,27 @@ app.post("/api/files/:fileId/revoke", requireAuth, async (req: AuthReq, res) => 
         }
 
         if (filesLedger) {
-            await filesLedger.revokeAccess(String(fileId), String(fileQ.rows[0].owner_id), String(recipientUserId), new Date().toISOString());
+            const ownerId = String(fileQ.rows[0].owner_id);
+
+            // ensure ledger record exists
+            try {
+                await filesLedger.getACL(String(fileId));
+            } catch {
+                await filesLedger.createFile(
+                    String(fileId),
+                    ownerId,
+                    String(fileQ.rows[0].cid),
+                    String(fileQ.rows[0].cipher_sha256),
+                    new Date(fileQ.rows[0].created_at).toISOString()
+                );
+            }
+
+            await filesLedger.revokeAccess(
+                String(fileId),
+                ownerId,
+                String(recipientUserId),
+                new Date().toISOString()
+            );
         }
 
         return res.json({ok: true});
@@ -480,6 +524,69 @@ app.get("/api/files/:fileId/audit", requireAuth, async (req: AuthReq, res) => {
     const audit = await filesLedger.getAudit(String(req.params.fileId));
     audit.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
     return res.json({ok: true, audit});
+});
+
+app.get("/api/files/:fileId/download", requireAuth, async (req: AuthReq, res) => {
+    try {
+        const fileId = String(req.params.fileId);
+
+        // Fetch file metadata from DB
+        const fileRes = await pool.query(
+            `SELECT id, owner_id, filename, cid, mime, cipher_sha256
+             FROM files
+             WHERE id = $1 LIMIT 1`,
+            [fileId]
+        );
+
+        if (fileRes.rows.length === 0) {
+            return res.status(404).json({ok: false, error: "File not found"});
+        }
+
+        const file = fileRes.rows[0];
+        const ownerId = String(file.owner_id);
+        const userId = String(req.user!.id);
+
+        // Authoritative access check via Fabric
+        await requireFileAccessOrOwner({
+            filesLedger,
+            fileId,
+            ownerId,
+            userId,
+        });
+
+        // Download ciphertext from IPFS gateway
+        const cid = String(file.cid);
+        const url = `https://ipfs.io/ipfs/${cid}`;
+        const r = await fetch(url);
+
+        if (!r.ok) {
+            return res.status(502).json({ok: false, error: "Failed to fetch from IPFS gateway"});
+        }
+
+        const buf = Buffer.from(await r.arrayBuffer());
+
+        // Integrity verification (ciphertext hash)
+        const expectedB64 = String(file.cipher_sha256 || "");
+        const actualB64 = sha256B64(buf);
+
+        if (!expectedB64 || !timingSafeEqualStr(actualB64, expectedB64)) {
+            return res.status(409).json({
+                ok: false,
+                error: "Integrity verification failed. The stored file may be corrupted or tampered with.",
+            });
+        }
+
+        // Return ciphertext
+        res.setHeader("Content-Type", file.mime || "application/octet-stream");
+        res.setHeader("Content-Disposition", `attachment; filename="${file.filename}"`);
+        return res.send(buf);
+    } catch (e: any) {
+        if (e instanceof HttpError) {
+            return res.status(e.status).json({ ok: false, error: e.message });
+        }
+        console.error("... error:", e);
+        return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
 });
 
 app.get('/health', async (_req, res) => {

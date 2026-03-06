@@ -15,8 +15,7 @@ CHANNEL_NAME="mychannel"
 # Org/peer paths in fabric-samples test-network
 USER_CERT_DIR="$NETWORK_DIR/organizations/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp/signcerts"
 USER_KEY_DIR="$NETWORK_DIR/organizations/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp/keystore"
-PEER_TLS_CA_FILE="$NETWORK_DIR/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt"
-
+PEER_TLS_CA_FILE="$NETWORK_DIR/organizations/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem"
 # CA TLS cert
 CA_TLS_CERT_FILE="$NETWORK_DIR/organizations/fabric-ca/org1/tls-cert.pem"
 

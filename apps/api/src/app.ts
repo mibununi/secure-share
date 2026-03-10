@@ -96,14 +96,13 @@ app.post("/api/files/metadata", requireAuth, async (req: AuthReq, res) => {
         }
 
         const {rows} = await pool.query(
-            `INSERT INTO files (owner_id, filename, cid, file_hash, mime, cipher_iv, cipher_sha256)
-             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at
+            `INSERT INTO files (owner_id, filename, cid, mime, cipher_iv, cipher_sha256)
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at
             `,
             [
                 req.user!.id,
                 filename,
                 cid,
-                cipher_sha256_b64,
                 mime ?? null,
                 cipher_iv_b64,
                 cipher_sha256_b64,

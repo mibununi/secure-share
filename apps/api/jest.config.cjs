@@ -5,8 +5,13 @@ module.exports = {
     // look for tests under src by default
     roots: ['<rootDir>/src'],
     // load test env AFTER Jest is ready (so imports work)
-    setupFilesAfterEnv: ['<rootDir>/src/test.setup.ts'],
+    setupFiles: ['<rootDir>/src/test.setup.ts'],
+    setupFilesAfterEnv: [
+        '<rootDir>/src/test.mocks.ts',
+        '<rootDir>/src/test.afterEnv.ts',
+    ],
     transform: {
         '^.+\\.ts$': ['ts-jest', { tsconfig: 'tsconfig.json' }],
     },
+    maxWorkers: 1,
 };

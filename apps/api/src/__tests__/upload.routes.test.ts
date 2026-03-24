@@ -48,3 +48,14 @@ it('accepts multipart upload and returns CID', async () => {
     expect(r.body.cid).toMatch(/^bafy/);
     expect(r.body.provider).toBe('pinata');
 });
+
+it('rejects upload without file', async () => {
+    const token = await login();
+
+    const r = await request(app)
+        .post('/api/upload')
+        .set('Authorization', `Bearer ${token}`);
+
+    expect(r.status).toBe(400);
+    expect(r.body.ok).toBe(false);
+});

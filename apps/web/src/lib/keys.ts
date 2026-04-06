@@ -118,3 +118,23 @@ export function fromB64(b64: string): Uint8Array {
     for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
     return u8;
 }
+
+export async function unwrapAesKeyWithPrivateKey(
+    wrappedKeyB64: string,
+    privateKey: CryptoKey
+): Promise<ArrayBuffer> {
+    const wrapped = fromB64(wrappedKeyB64);
+
+    const wrappedBuffer = wrapped.buffer.slice(
+        wrapped.byteOffset,
+        wrapped.byteOffset + wrapped.byteLength
+    ) as ArrayBuffer;
+
+    const wrappedBytes = new Uint8Array(wrappedBuffer);
+
+    return crypto.subtle.decrypt(
+        {name: "RSA-OAEP"},
+        privateKey,
+        wrappedBytes
+    );
+}

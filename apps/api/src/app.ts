@@ -384,7 +384,8 @@ app.post("/api/projects/:projectId/bootstrap-manager-access", requireAuth, async
                 await filesLedger.grantAccess(
                     String(grant.fileId),
                     String(file.owner_id),
-                    String(userId),
+                    String(req.user!.id), // admin performing bootstrap
+                    String(userId),       // recipient (manager)
                     new Date().toISOString()
                 );
             }
@@ -952,6 +953,7 @@ app.post("/api/files/:fileId/share", requireAuth, async (req: AuthReq, res) => {
 
         if (filesLedger) {
             const ownerId = String(file.owner_id);
+            const actorId = String(req.user!.id);
 
             try {
                 await filesLedger.getACL(String(fileId));
@@ -968,6 +970,7 @@ app.post("/api/files/:fileId/share", requireAuth, async (req: AuthReq, res) => {
             await filesLedger.grantAccess(
                 String(fileId),
                 ownerId,
+                String(req.user!.id),
                 String(recipientUserId),
                 new Date().toISOString()
             );
@@ -1032,6 +1035,7 @@ app.post("/api/files/:fileId/revoke", requireAuth, async (req: AuthReq, res) => 
 
         if (filesLedger) {
             const ownerId = String(file.owner_id);
+            const actorId = String(req.user!.id);
 
             // ensure ledger record exists
             try {
@@ -1049,6 +1053,7 @@ app.post("/api/files/:fileId/revoke", requireAuth, async (req: AuthReq, res) => 
             await filesLedger.revokeAccess(
                 String(fileId),
                 ownerId,
+                String(req.user!.id),
                 String(recipientUserId),
                 new Date().toISOString()
             );

@@ -436,9 +436,11 @@ export default function AllFilesPanel({
                                     <div style={{minWidth: 0}}>
                                         <div>
                                             <b>{f.filename}</b>{" "}
-                                            <span className="muted" style={{fontSize: 12}}>
-                                                {f.kind === "owned" ? "(Owned)" : "(Shared)"}
-                                            </span>
+                                            {(f.kind === "owned" || f.owner_id === meId) && (
+                                                <span className="muted" style={{fontSize: 12}}>
+                                                    (Owned)
+                                                </span>
+                                            )}
                                         </div>
 
                                         {selectedProjectId && (

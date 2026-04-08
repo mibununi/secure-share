@@ -510,6 +510,59 @@ app.post("/api/projects/:projectId/revoke", requireAuth, async (req: AuthReq, re
             return res.status(403).json({ok: false, error: "Project admins cannot be removed"});
         }
 
+        const activePermsQ = await pool.query(
+            `SELECT f.id, f.owner_id, f.cid, f.cipher_sha256, f.created_at
+             FROM file_permissions fp
+                      JOIN files f ON f.id = fp.file_id
+             WHERE f.project_id = $1
+               AND fp.user_id = $2
+               AND fp.revoked_at IS NULL`,
+            [projectId, userId]
+        );
+
+        if (filesLedger) {
+            const actorId = String(req.user!.id);
+            const recipientId = String(userId);
+            const nowIso = new Date().toISOString();
+
+            for (const file of activePermsQ.rows) {
+                const fileId = String(file.id);
+                const ownerId = String(file.owner_id);
+
+                try {
+                    await filesLedger.getACL(fileId);
+                } catch {
+                    await filesLedger.createFile(
+                        fileId,
+                        ownerId,
+                        String(file.cid),
+                        String(file.cipher_sha256),
+                        new Date(file.created_at).toISOString()
+                    );
+                }
+
+                try {
+                    const stillHasAccess = await filesLedger.canAccess(fileId, recipientId);
+                    if (stillHasAccess) {
+                        await filesLedger.revokeAccess(
+                            fileId,
+                            ownerId,
+                            actorId,
+                            recipientId,
+                            nowIso
+                        );
+                    }
+                } catch (e) {
+                    console.error("project member fabric revoke failed:", {
+                        fileId,
+                        recipientId,
+                        error: e,
+                    });
+                    return res.status(503).json({ok: false, error: "Blockchain revoke failed"});
+                }
+            }
+        }
+
         await pool.query(
             `DELETE
              FROM project_members
@@ -611,25 +664,41 @@ app.post("/api/files/metadata", requireAuth, async (req: AuthReq, res) => {
         );
 
         const {id, created_at} = rows[0];
+        const fileId = String(id);
+        const ownerId = String(req.user!.id);
+        const createdAtIso = new Date(created_at).toISOString();
 
         if (filesLedger) {
             try {
                 await filesLedger.createFile(
-                    String(id),                 // fileId on ledger
-                    String(req.user!.id),       // ownerId
-                    String(cid),                // cid
-                    String(cipher_sha256_b64),  // hash
-                    new Date(created_at).toISOString()
+                    fileId,
+                    ownerId,
+                    String(cid),
+                    String(cipher_sha256_b64),
+                    createdAtIso
                 );
+
+                for (const item of parsedWrappedKeys) {
+                    const recipientId = String(item.userId);
+                    if (recipientId === ownerId) continue;
+
+                    await filesLedger.grantAccess(
+                        fileId,
+                        ownerId,
+                        ownerId,
+                        recipientId,
+                        createdAtIso
+                    );
+                }
             } catch (e) {
-                console.error("fabric CreateFile failed:", e);
+                console.error("fabric metadata sync failed:", e);
                 return res.status(503).json({ok: false, error: "Blockchain write failed"});
             }
         }
 
         for (const item of parsedWrappedKeys) {
             await upsertFilePermission(
-                String(id),
+                fileId,
                 item.userId,
                 item.wrapped_key_b64,
                 req.user!.id
@@ -970,7 +1039,7 @@ app.post("/api/files/:fileId/share", requireAuth, async (req: AuthReq, res) => {
             await filesLedger.grantAccess(
                 String(fileId),
                 ownerId,
-                String(req.user!.id),
+                actorId,
                 String(recipientUserId),
                 new Date().toISOString()
             );
@@ -1053,7 +1122,7 @@ app.post("/api/files/:fileId/revoke", requireAuth, async (req: AuthReq, res) => 
             await filesLedger.revokeAccess(
                 String(fileId),
                 ownerId,
-                String(req.user!.id),
+                actorId,
                 String(recipientUserId),
                 new Date().toISOString()
             );

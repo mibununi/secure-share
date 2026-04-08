@@ -48,24 +48,44 @@ async function rebuildLedger() {
             const userId = String(p.user_id);
             if (userId === ownerId) continue;
 
+            const grantActorId = String(p.granted_by_user_id || ownerId);
             const grantedAt = new Date(p.created_at).toISOString();
 
             const hasAccess = await filesLedger.canAccess(fileId, userId);
 
             if (!p.revoked_at) {
                 if (!hasAccess) {
-                    await filesLedger.grantAccess(fileId, ownerId, userId, grantedAt);
+                    await filesLedger.grantAccess(
+                        fileId,
+                        ownerId,
+                        grantActorId,
+                        userId,
+                        grantedAt
+                    );
                 }
             } else {
                 // ensure grant happened
                 if (!hasAccess) {
-                    await filesLedger.grantAccess(fileId, ownerId, userId, grantedAt);
+                    await filesLedger.grantAccess(
+                        fileId,
+                        ownerId,
+                        grantActorId,
+                        userId,
+                        grantedAt
+                    );
                 }
 
                 const revokedAt = new Date(p.revoked_at).toISOString();
                 const stillHas = await filesLedger.canAccess(fileId, userId);
                 if (stillHas) {
-                    await filesLedger.revokeAccess(fileId, ownerId, userId, revokedAt);
+                    const revokeActorId = ownerId;
+                    await filesLedger.revokeAccess(
+                        fileId,
+                        ownerId,
+                        revokeActorId,
+                        userId,
+                        revokedAt
+                    );
                 }
             }
         }

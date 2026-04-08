@@ -1,10 +1,21 @@
-import { generateRsaOaep, exportSpkiB64, exportPkcs8, deriveAesKey, wrapPrivateKey, rand, toB64, fromB64, unwrapPrivateKey, importPkcs8ToCryptoKey } from "./keys";
-import { saveKeystore, loadKeystore } from "./keystore";
+import {
+    generateRsaOaep,
+    exportSpkiB64,
+    exportPkcs8,
+    deriveAesKey,
+    wrapPrivateKey,
+    rand,
+    toB64,
+    fromB64,
+    unwrapPrivateKey,
+    importPkcs8ToCryptoKey
+} from "./keys";
+import {saveKeystore, loadKeystore} from "./keystore";
 
 const API = import.meta.env.VITE_API_BASE_URL;
 
-export async function setupKeysAfterRegister(password: string, token: string) {
-    const { publicKey, privateKey } = await generateRsaOaep();
+export async function setupKeysAfterRegister(email: string, password: string, token: string) {
+    const {publicKey, privateKey} = await generateRsaOaep();
 
     const publicSpkiB64 = await exportSpkiB64(publicKey);
     const pkcs8 = await exportPkcs8(privateKey);
@@ -15,7 +26,7 @@ export async function setupKeysAfterRegister(password: string, token: string) {
 
     const wrapped = await wrapPrivateKey(pkcs8, aesKey, iv);
 
-    await saveKeystore({
+    await saveKeystore(email, {
         version: 1,
         saltB64: toB64(salt),
         ivB64: toB64(iv),
@@ -30,12 +41,12 @@ export async function setupKeysAfterRegister(password: string, token: string) {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ publicKey: publicSpkiB64 }),
+        body: JSON.stringify({publicKey: publicSpkiB64}),
     });
 }
 
-export async function loadSessionKeysAfterLogin(password: string) {
-    const ks = await loadKeystore();
+export async function loadSessionKeysAfterLogin(email: string, password: string) {
+    const ks = await loadKeystore(email);
     if (!ks) throw new Error("No local keystore found.");
 
     const salt = fromB64(ks.saltB64);
@@ -46,5 +57,5 @@ export async function loadSessionKeysAfterLogin(password: string) {
     const pkcs8 = await unwrapPrivateKey(wrapped, aesKey, iv);
     const privateKey = await importPkcs8ToCryptoKey(pkcs8);
 
-    return { publicSpkiB64: ks.publicSpkiB64, privateKey };
+    return {publicSpkiB64: ks.publicSpkiB64, privateKey};
 }

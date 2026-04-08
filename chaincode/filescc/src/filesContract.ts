@@ -50,27 +50,53 @@ export class FilesContract extends Contract {
         return JSON.stringify(file);
     }
 
-    async GrantAccess(ctx: Context, fileId: string, ownerId: string, granteeId: string, ts: string) {
+    async GrantAccess(
+        ctx: Context,
+        fileId: string,
+        ownerId: string,
+        actorId: string,
+        granteeId: string,
+        ts: string
+    ) {
         const acl = await this.getACLInternal(ctx, fileId);
-        if (acl.ownerId !== ownerId) throw new Error("Only owner can grant access");
+        if (acl.ownerId !== ownerId) throw new Error("Owner mismatch");
 
         acl.allowed[granteeId] = true;
         await ctx.stub.putState(aclKey(fileId), Buffer.from(JSON.stringify(acl)));
 
-        await this.appendAudit(ctx, fileId, {action: "GRANT", actorId: ownerId, targetUserId: granteeId, ts});
-        return JSON.stringify(acl);
+        await this.appendAudit(ctx, fileId, {
+            action: "GRANT",
+            actorId,
+            targetUserId: granteeId,
+            ts
+        });
+
+        return true;
     }
 
-    async RevokeAccess(ctx: Context, fileId: string, ownerId: string, granteeId: string, ts: string) {
+    async RevokeAccess(
+        ctx: Context,
+        fileId: string,
+        ownerId: string,
+        actorId: string,
+        granteeId: string,
+        ts: string
+    ) {
         const acl = await this.getACLInternal(ctx, fileId);
-        if (acl.ownerId !== ownerId) throw new Error("Only owner can revoke access");
+        if (acl.ownerId !== ownerId) throw new Error("Owner mismatch");
         if (granteeId === ownerId) throw new Error("Cannot revoke owner");
 
         delete acl.allowed[granteeId];
         await ctx.stub.putState(aclKey(fileId), Buffer.from(JSON.stringify(acl)));
 
-        await this.appendAudit(ctx, fileId, {action: "REVOKE", actorId: ownerId, targetUserId: granteeId, ts});
-        return JSON.stringify(acl);
+        await this.appendAudit(ctx, fileId, {
+            action: "REVOKE",
+            actorId,
+            targetUserId: granteeId,
+            ts
+        });
+
+        return true;
     }
 
     async CanAccess(ctx: Context, fileId: string, userId: string) {

@@ -2,9 +2,17 @@ import {useEffect, useMemo, useState} from "react";
 import {api, type MyFilesResponse, type UserRole, type SharedWithMeResponse} from "../lib/api";
 import {fromB64, importSpkiFromB64, toB64} from "../lib/keys";
 
-type OwnedRow = MyFilesResponse["files"][number];
+type OwnedRow = MyFilesResponse["files"][number] & {
+    project_id?: string | null;
+    owner_id?: string;
+    owner_email?: string;
+};
 
-type SharedRow = SharedWithMeResponse["files"][number];
+type SharedRow = SharedWithMeResponse["files"][number] & {
+    project_id?: string | null;
+    owner_id?: string;
+    owner_email?: string;
+};
 
 type OwnedFile = OwnedRow & { kind: "owned" };
 type SharedFile = SharedRow & { kind: "shared" };
@@ -24,6 +32,8 @@ type Props = {
     role: UserRole;
     sessionPrivateKey: CryptoKey | null;
     filesVersion: number;
+    selectedProjectId?: string | null;
+    keysReady: boolean;
 };
 
 function toArrayBuffer(u8: Uint8Array): ArrayBuffer {
@@ -38,7 +48,9 @@ async function sha256(u8: Uint8Array): Promise<Uint8Array> {
 
 function eqBytes(a: Uint8Array, b: Uint8Array): boolean {
     if (a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    for (let i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) return false;
+    }
     return true;
 }
 
@@ -53,7 +65,15 @@ function downloadBlob(blob: Blob, filename: string) {
     URL.revokeObjectURL(url);
 }
 
-export default function AllFilesPanel({token, meId, role, sessionPrivateKey, filesVersion}: Props) {
+export default function AllFilesPanel({
+                                          token,
+                                          meId,
+                                          role,
+                                          sessionPrivateKey,
+                                          filesVersion,
+                                          selectedProjectId,
+                                          keysReady,
+                                      }: Props) {
     const [owned, setOwned] = useState<OwnedRow[]>([]);
     const [shared, setShared] = useState<SharedRow[]>([]);
     const [status, setStatus] = useState("");
@@ -70,7 +90,7 @@ export default function AllFilesPanel({token, meId, role, sessionPrivateKey, fil
 
     const [downloadStatus, setDownloadStatus] = useState<Record<string, string>>({});
 
-    const canManageAccessUI = role === "admin" || role === "manager";
+    const keysAvailable = keysReady && !!sessionPrivateKey;
 
     const allFiles: AnyFile[] = useMemo(() => {
         const o: AnyFile[] = owned.map((f) => ({...f, kind: "owned" as const}));
@@ -87,11 +107,28 @@ export default function AllFilesPanel({token, meId, role, sessionPrivateKey, fil
             if (!token) return;
             try {
                 setStatus("Loading files...");
-                const [o, s] = await Promise.all([api.myFiles(token), api.sharedWithMe(token)]);
-                if (cancelled) return;
 
-                setOwned(o.files);
-                setShared(s.files);
+                if (selectedProjectId) {
+                    const res = await fetch(
+                        `${import.meta.env.VITE_API_BASE ?? "http://localhost:4000"}/api/projects/${selectedProjectId}/files`,
+                        {
+                            headers: {Authorization: `Bearer ${token}`},
+                        }
+                    );
+                    const json = await res.json();
+                    if (!res.ok || !json.ok) {
+                        throw new Error(json?.error || "Failed to load project files");
+                    }
+                    if (cancelled) return;
+                    setOwned(json.files ?? []);
+                    setShared([]);
+                } else {
+                    const [o, s] = await Promise.all([api.myFiles(token), api.sharedWithMe(token)]);
+                    if (cancelled) return;
+
+                    setOwned(o.files);
+                    setShared(s.files);
+                }
                 setStatus("");
             } catch (e: unknown) {
                 if (cancelled) return;
@@ -104,12 +141,28 @@ export default function AllFilesPanel({token, meId, role, sessionPrivateKey, fil
         return () => {
             cancelled = true;
         };
-    }, [token, filesVersion]);
+    }, [token, filesVersion, selectedProjectId]);
 
     async function refreshAll() {
+        if (selectedProjectId) {
+            const res = await fetch(
+                `${import.meta.env.VITE_API_BASE ?? "http://localhost:4000"}/api/projects/${selectedProjectId}/files`,
+                {
+                    headers: {Authorization: `Bearer ${token}`},
+                }
+            );
+            const json = await res.json();
+            if (!res.ok || !json.ok) {
+                throw new Error(json?.error || "Failed to refresh project files");
+            }
+            setOwned(json.files ?? []);
+            setShared([]);
+            return;
+        }
+
         const [o, s] = await Promise.all([api.myFiles(token), api.sharedWithMe(token)]);
         setOwned(o.files);
-        setShared(s.files); // no cast
+        setShared(s.files);
     }
 
     function resetAccessUI() {
@@ -142,6 +195,7 @@ export default function AllFilesPanel({token, meId, role, sessionPrivateKey, fil
             await api.revokeAccess(fileId, targetUserId, token);
             setPermsStatus("Access revoked.");
             await loadPermissions(fileId);
+            await refreshAll();
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : String(e);
             setPermsStatus(`Revoke failed: ${msg}`);
@@ -150,8 +204,13 @@ export default function AllFilesPanel({token, meId, role, sessionPrivateKey, fil
 
     async function lookupRecipient() {
         try {
+            const normalizedEmail = recipientEmail.trim().toLowerCase();
+            if (!normalizedEmail) {
+                throw new Error("Enter a recipient email first.");
+            }
+
             setShareStatus("Looking up user...");
-            const json = await api.lookupPublicKey(recipientEmail, token);
+            const json = await api.lookupPublicKey(normalizedEmail, token);
             setRecipientUserId(json.userId);
             setRecipientPublicKeyB64(json.publicKey);
             setShareStatus("User found.");
@@ -164,24 +223,57 @@ export default function AllFilesPanel({token, meId, role, sessionPrivateKey, fil
     }
 
     function canShareThisFile(file: AnyFile): boolean {
-        // employees can share only their own (owned) files
-        // managers/admins can share all files (for now)
-        if (role === "admin" || role === "manager") return true;
-        return file.kind === "owned";
+        const isOwner = file.owner_id === meId || file.kind === "owned";
+
+        // Personal files: only owner can share
+        if (!selectedProjectId) {
+            return isOwner;
+        }
+
+        // Project files:
+        // - owner can share
+        // - admins/managers can share
+        // - employees can share only their own files
+        if (isOwner) {
+            return true;
+        }
+
+        return role === "admin" || role === "manager";
+    }
+
+    function canOpenAccessPanelForFile(file: AnyFile): boolean {
+        const isOwner = file.owner_id === meId || file.kind === "owned";
+
+        // Personal files: only owner can open access UI
+        if (!selectedProjectId) {
+            return isOwner;
+        }
+
+        // Project files:
+        // - owner can always open
+        // - admins/managers can open
+        // - employees can only open for their own files
+        if (isOwner) {
+            return true;
+        }
+
+        return role === "admin" || role === "manager";
     }
 
     async function shareFile(fileId: string) {
         try {
-            if (!recipientUserId || !recipientPublicKeyB64) throw new Error("Lookup a recipient first.");
+            if (!keysAvailable || !sessionPrivateKey) {
+                throw new Error("Encryption keys are not ready yet.");
+            }
+
+            if (!recipientUserId || !recipientPublicKeyB64) {
+                throw new Error("Lookup a recipient first.");
+            }
 
             setShareStatus("Preparing keys...");
 
             const access = await api.fileAccess(fileId, token);
             const ownerWrappedKeyB64 = access.file.wrapped_key_b64;
-
-            if (!sessionPrivateKey) {
-                throw new Error("Private key unavailable. Log out and log back in to unlock keys on this device.");
-            }
 
             // unwrap AES raw key with my RSA private key
             const wrappedBytes = fromB64(ownerWrappedKeyB64);
@@ -193,7 +285,11 @@ export default function AllFilesPanel({token, meId, role, sessionPrivateKey, fil
 
             // re-wrap AES raw key for recipient using their RSA public key
             const recipientPk = await importSpkiFromB64(recipientPublicKeyB64);
-            const wrappedForRecipientBuf = await crypto.subtle.encrypt({name: "RSA-OAEP"}, recipientPk, aesRawBuf);
+            const wrappedForRecipientBuf = await crypto.subtle.encrypt(
+                {name: "RSA-OAEP"},
+                recipientPk,
+                aesRawBuf
+            );
             const wrappedForRecipient = new Uint8Array(wrappedForRecipientBuf);
 
             setShareStatus("Sharing...");
@@ -213,8 +309,8 @@ export default function AllFilesPanel({token, meId, role, sessionPrivateKey, fil
         try {
             setDownloadStatus((m) => ({...m, [file.id]: "Preparing..."}));
 
-            if (!sessionPrivateKey) {
-                throw new Error("Private key unavailable. Log out and log back in to unlock keys on this device.");
+            if (!keysAvailable || !sessionPrivateKey) {
+                throw new Error("Encryption keys are not ready yet.");
             }
 
             // fetch access metadata
@@ -227,7 +323,7 @@ export default function AllFilesPanel({token, meId, role, sessionPrivateKey, fil
             try {
                 const wrappedKeyBytes = fromB64(wrapped_key_b64);
                 aesRawBuf = await crypto.subtle.decrypt(
-                    { name: "RSA-OAEP" },
+                    {name: "RSA-OAEP"},
                     sessionPrivateKey,
                     toArrayBuffer(wrappedKeyBytes)
                 );
@@ -239,7 +335,7 @@ export default function AllFilesPanel({token, meId, role, sessionPrivateKey, fil
             // import AES-GCM key
             let aesKey: CryptoKey;
             try {
-                aesKey = await crypto.subtle.importKey("raw", aesRawBuf, { name: "AES-GCM" }, false, ["decrypt"]);
+                aesKey = await crypto.subtle.importKey("raw", aesRawBuf, {name: "AES-GCM"}, false, ["decrypt"]);
             } catch (e: unknown) {
                 const msg = e instanceof Error ? `${e.name}${e.message ? `: ${e.message}` : ""}` : String(e);
                 throw new Error(`Step 3 (AES import) failed: ${msg}`);
@@ -249,7 +345,7 @@ export default function AllFilesPanel({token, meId, role, sessionPrivateKey, fil
             setDownloadStatus((m) => ({...m, [file.id]: "Downloading..."}));
             const url = `${import.meta.env.VITE_API_BASE ?? "http://localhost:4000"}/api/files/${file.id}/download`;
             const resp = await fetch(url, {
-                headers: { Authorization: `Bearer ${token}` },
+                headers: {Authorization: `Bearer ${token}`},
                 cache: "no-store",
             });
             if (!resp.ok) {
@@ -275,7 +371,7 @@ export default function AllFilesPanel({token, meId, role, sessionPrivateKey, fil
             try {
                 const ivBytes = fromB64(cipher_iv_b64);
                 ptBuf = await crypto.subtle.decrypt(
-                    { name: "AES-GCM", iv: toArrayBuffer(ivBytes) },
+                    {name: "AES-GCM", iv: toArrayBuffer(ivBytes)},
                     aesKey,
                     toArrayBuffer(ct)
                 );
@@ -307,14 +403,20 @@ export default function AllFilesPanel({token, meId, role, sessionPrivateKey, fil
                         ? `${e.name}${e.message ? `: ${e.message}` : ""}`
                         : String(e);
 
-            setDownloadStatus((m) => ({ ...m, [file.id]: `Failed: ${msg}` }));
+            setDownloadStatus((m) => ({...m, [file.id]: `Failed: ${msg}`}));
         }
     }
 
     return (
         <div className="panel" style={{marginTop: 16}}>
-            <h3>All Files</h3>
+            <h3>{selectedProjectId ? "Project Files" : "All Files"}</h3>
             {status && <p className="muted">Status: {status}</p>}
+
+            {!keysAvailable && (
+                <p className="muted" style={{marginTop: 8}}>
+                    Download and sharing are disabled until your encryption keys are ready.
+                </p>
+            )}
 
             {allFiles.length === 0 ? (
                 <p className="muted" style={{marginTop: 8}}>
@@ -325,8 +427,8 @@ export default function AllFilesPanel({token, meId, role, sessionPrivateKey, fil
                     {allFiles.map((f) => {
                         const expanded = activeFileId === f.id;
                         const shareAllowed = canShareThisFile(f);
-                        const showAccessControls = canManageAccessUI;
-                        const canOpenAccessPanel = shareAllowed || showAccessControls;
+                        const canOpenAccessPanel = canOpenAccessPanelForFile(f);
+                        const showAccessControls = canOpenAccessPanel;
 
                         return (
                             <div key={`${f.kind}:${f.id}`} style={{padding: 10, borderBottom: "1px solid #eee"}}>
@@ -334,8 +436,19 @@ export default function AllFilesPanel({token, meId, role, sessionPrivateKey, fil
                                     <div style={{minWidth: 0}}>
                                         <div>
                                             <b>{f.filename}</b>{" "}
-                                            <span className="muted" style={{fontSize: 12}}> {f.kind === "owned" ? "(Owned)" : "(Shared)"}</span>
+                                            {(f.kind === "owned" || f.owner_id === meId) && (
+                                                <span className="muted" style={{fontSize: 12}}>
+                                                    (Owned)
+                                                </span>
+                                            )}
                                         </div>
+
+                                        {selectedProjectId && (
+                                            <div className="muted" style={{marginTop: 4}}>
+                                                Project file
+                                            </div>
+                                        )}
+
                                         {f.kind === "shared" && (
                                             <div className="muted" style={{marginTop: 4, wordBreak: "break-word"}}>
                                                 Shared by: <b>{f.shared_by_email ?? f.owner_email}</b>
@@ -347,18 +460,20 @@ export default function AllFilesPanel({token, meId, role, sessionPrivateKey, fil
                                         </div>
                                     </div>
 
-                                    <div style={{
-                                        display: "flex",
-                                        flexDirection: "column",
-                                        gap: 8,
-                                        alignItems: "flex-end"
-                                    }}>
+                                    <div
+                                        style={{
+                                            display: "flex",
+                                            flexDirection: "column",
+                                            gap: 8,
+                                            alignItems: "flex-end",
+                                        }}
+                                    >
                                         <button
                                             type="button"
                                             className="btn btn--success"
                                             onClick={() => void downloadAndDecrypt(f)}
-                                            disabled={!sessionPrivateKey}
-                                            title={!sessionPrivateKey ? "Unlock session keys by logging in again" : undefined}
+                                            disabled={!keysAvailable}
+                                            title={!keysAvailable ? "Encryption keys are not ready yet" : undefined}
                                         >
                                             Download
                                         </button>
@@ -397,7 +512,7 @@ export default function AllFilesPanel({token, meId, role, sessionPrivateKey, fil
                                     <div style={{marginTop: 12}}>
                                         <div style={{marginTop: 10}}>
                                             <div className="muted" style={{fontSize: 12, marginBottom: 6}}>
-                                                Share (requires permission)
+                                                Share
                                             </div>
 
                                             <input
@@ -406,16 +521,16 @@ export default function AllFilesPanel({token, meId, role, sessionPrivateKey, fil
                                                 placeholder="Recipient email"
                                                 value={recipientEmail}
                                                 onChange={(e) => setRecipientEmail(e.target.value)}
-                                                disabled={!shareAllowed}
+                                                disabled={!shareAllowed || !keysAvailable}
                                             />
 
                                             <div style={{display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap"}}>
                                                 <button
                                                     type="button"
                                                     className="btn"
-                                                    disabled={!shareAllowed || !recipientEmail}
+                                                    disabled={!shareAllowed || !keysAvailable || !recipientEmail.trim()}
                                                     onClick={() => void lookupRecipient()}
-                                                    title={!shareAllowed ? "You are not allowed to share this file" : undefined}
+                                                    title={!keysAvailable ? "Encryption keys are not ready yet" : undefined}
                                                 >
                                                     Find user
                                                 </button>
@@ -425,12 +540,12 @@ export default function AllFilesPanel({token, meId, role, sessionPrivateKey, fil
                                                     className="btn btn--success"
                                                     disabled={
                                                         !shareAllowed ||
-                                                        !sessionPrivateKey ||
+                                                        !keysAvailable ||
                                                         !recipientUserId ||
                                                         !recipientPublicKeyB64
                                                     }
                                                     onClick={() => void shareFile(f.id)}
-                                                    title={!shareAllowed ? "You are not allowed to share this file" : undefined}
+                                                    title={!keysAvailable ? "Encryption keys are not ready yet" : undefined}
                                                 >
                                                     Share File
                                                 </button>
@@ -463,16 +578,18 @@ export default function AllFilesPanel({token, meId, role, sessionPrivateKey, fil
                                                     <div style={{marginTop: 8}}>
                                                         {permissions.map((p) => {
                                                             const isSelf = p.user_id === meId;
-                                                            const managerCantRevokeAdmin = role === "manager" && p.role === "admin";
+                                                            const managerCantRevokePrivilegedUser =
+                                                                role === "manager" && (p.role === "admin" || p.role === "manager");
 
-                                                            const revokeDisabled = p.is_owner || isSelf || managerCantRevokeAdmin;
+                                                            const revokeDisabled =
+                                                                p.is_owner || isSelf || managerCantRevokePrivilegedUser;
 
                                                             const revokeTitle = p.is_owner
                                                                 ? "The owner cannot be revoked"
                                                                 : isSelf
                                                                     ? "You cannot revoke yourself"
-                                                                    : managerCantRevokeAdmin
-                                                                        ? "Managers cannot revoke admins"
+                                                                    : managerCantRevokePrivilegedUser
+                                                                        ? "Managers can only revoke employees"
                                                                         : undefined;
 
                                                             return (
@@ -489,18 +606,24 @@ export default function AllFilesPanel({token, meId, role, sessionPrivateKey, fil
                                                                         <div style={{wordBreak: "break-word"}}>
                                                                             <b>{p.email}</b>
                                                                             {p.is_owner && (
-                                                                                <span className="muted" style={{
-                                                                                    marginLeft: 8,
-                                                                                    fontSize: 12
-                                                                                }}>
+                                                                                <span
+                                                                                    className="muted"
+                                                                                    style={{
+                                                                                        marginLeft: 8,
+                                                                                        fontSize: 12
+                                                                                    }}
+                                                                                >
                                                                                     (Owner)
                                                                                 </span>
                                                                             )}
                                                                             {p.role && !p.is_owner && (
-                                                                                <span className="muted" style={{
-                                                                                    marginLeft: 8,
-                                                                                    fontSize: 12
-                                                                                }}>
+                                                                                <span
+                                                                                    className="muted"
+                                                                                    style={{
+                                                                                        marginLeft: 8,
+                                                                                        fontSize: 12
+                                                                                    }}
+                                                                                >
                                                                                     ({p.role})
                                                                                 </span>
                                                                             )}
@@ -528,12 +651,6 @@ export default function AllFilesPanel({token, meId, role, sessionPrivateKey, fil
                                                         })}
                                                     </div>
                                                 )}
-                                            </div>
-                                        )}
-
-                                        {!showAccessControls && (
-                                            <div className="muted" style={{marginTop: 16, fontSize: 12}}>
-                                                Access list / revocation is available only for <b>admins/managers</b>.
                                             </div>
                                         )}
                                     </div>

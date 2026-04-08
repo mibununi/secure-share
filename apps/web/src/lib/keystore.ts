@@ -9,7 +9,6 @@ export type Keystore = {
 
 const DB = "secureshare";
 const STORE = "keystore";
-const KEY = "v1";
 
 function openDb(): Promise<IDBDatabase> {
     return new Promise((resolve, reject) => {
@@ -23,22 +22,26 @@ function openDb(): Promise<IDBDatabase> {
     });
 }
 
-export async function saveKeystore(record: Keystore): Promise<void> {
+function makeKey(email: string) {
+    return `keystore:${email.trim().toLowerCase()}`;
+}
+
+export async function saveKeystore(email: string, record: Keystore): Promise<void> {
     const db = await openDb();
     await new Promise<void>((resolve, reject) => {
         const tx = db.transaction(STORE, "readwrite");
-        tx.objectStore(STORE).put(record, KEY);
+        tx.objectStore(STORE).put(record, makeKey(email));
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
     });
     db.close();
 }
 
-export async function loadKeystore(): Promise<Keystore | null> {
+export async function loadKeystore(email: string): Promise<Keystore | null> {
     const db = await openDb();
     const rec = await new Promise<Keystore | null>((resolve, reject) => {
         const tx = db.transaction(STORE, "readonly");
-        const req = tx.objectStore(STORE).get(KEY);
+        const req = tx.objectStore(STORE).get(makeKey(email));
         req.onsuccess = () => resolve((req.result as Keystore) || null);
         req.onerror = () => reject(req.error);
     });

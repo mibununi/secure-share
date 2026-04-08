@@ -1,4 +1,4 @@
-import { type Contract } from '@hyperledger/fabric-gateway';
+import {type Contract} from '@hyperledger/fabric-gateway';
 
 export type FileRecord = {
     fileId: string;
@@ -33,20 +33,47 @@ function asBool(bytes: Uint8Array): boolean {
 }
 
 export class FilesLedger {
-    constructor(private readonly contract: Contract) {}
+    constructor(private readonly contract: Contract) {
+    }
 
     async createFile(fileId: string, ownerId: string, cid: string, hash: string, ts: string) {
         const res = await this.contract.submitTransaction('CreateFile', fileId, ownerId, cid, hash, ts);
         return asJson<FileRecord>(res);
     }
 
-    async grantAccess(fileId: string, ownerId: string, recipientId: string, ts: string) {
-        const res = await this.contract.submitTransaction('GrantAccess', fileId, ownerId, recipientId, ts);
+    async grantAccess(
+        fileId: string,
+        ownerId: string,
+        actorId: string,
+        recipientId: string,
+        ts: string
+    ) {
+        const res = await this.contract.submitTransaction(
+            'GrantAccess',
+            fileId,
+            ownerId,
+            actorId,
+            recipientId,
+            ts
+        );
         return asJson<ACLRecord>(res);
     }
 
-    async revokeAccess(fileId: string, ownerId: string, recipientId: string, ts: string) {
-        const res = await this.contract.submitTransaction('RevokeAccess', fileId, ownerId, recipientId, ts);
+    async revokeAccess(
+        fileId: string,
+        ownerId: string,
+        actorId: string,
+        recipientId: string,
+        ts: string
+    ) {
+        const res = await this.contract.submitTransaction(
+            'RevokeAccess',
+            fileId,
+            ownerId,
+            actorId,
+            recipientId,
+            ts
+        );
         return asJson<ACLRecord>(res);
     }
 
